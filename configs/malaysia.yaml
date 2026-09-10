@@ -1,0 +1,58 @@
+market_code: MY
+market_name: "Bursa Malaysia"
+currency: MYR
+timezone: "Asia/Kuala_Lumpur"
+annual_trading_days: 248
+benchmark_symbol: "^KLSE"
+
+universe:
+  - symbol: "^KLSE"
+    name: "FTSE Bursa Malaysia KLCI"
+    asset_class: "equity_index"
+  - symbol: "1155.KL"
+    name: "Malayan Banking Berhad (Maybank)"
+    asset_class: "equity"
+    sector: "Financials"
+  - symbol: "1295.KL"
+    name: "Public Bank Berhad"
+    asset_class: "equity"
+    sector: "Financials"
+  - symbol: "5347.KL"
+    name: "Tenaga Nasional Berhad"
+    asset_class: "equity"
+    sector: "Utilities"
+  - symbol: "1023.KL"
+    name: "CIMB Group Holdings Berhad"
+    asset_class: "equity"
+    sector: "Financials"
+  - symbol: "5183.KL"
+    name: "Petronas Chemicals Group Berhad"
+    asset_class: "equity"
+    sector: "Materials"
+  - symbol: "5225.KL"
+    name: "IHH Healthcare Berhad"
+    asset_class: "equity"
+    sector: "Healthcare"
+  - symbol: "6742.KL"
+    name: "YTL Power International Berhad"
+    asset_class: "equity"
+    sector: "Utilities"
+
+macro_proxies:
+  - symbol: "MYR=X"
+    name: "USD/MYR Spot Rate"
+    category: "FX"
+  - symbol: "BZ=F"
+    name: "Brent Crude Oil Futures"
+    category: "Commodity"
+  - symbol: "GC=F"
+    name: "Gold Futures"
+    category: "Commodity"
+
+transaction_costs:
+  brokerage_bps: 10.0       # 0.10% standard retail/institutional blended
+  clearing_fee_bps: 3.0     # 0.03% Bursa clearing fee
+  stamp_duty_bps: 10.0      # 0.10% Stamp duty (capped at RM 1,000 per contract)
+  bid_ask_spread_bps: 12.0  # 0.12% typical large/mid-cap spread
+  default_slippage_bps: 8.0 # 0.08% execution slippage
+  minimum_commission: 8.0   # RM 8 minimum commission

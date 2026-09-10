@@ -1,0 +1,43 @@
+market_code: JP
+market_name: "Japan"
+currency: JPY
+timezone: "Asia/Tokyo"
+annual_trading_days: 245
+benchmark_symbol: "^N225"
+
+universe:
+  - symbol: "^N225"
+    name: "Nikkei 225 Stock Average"
+    asset_class: "equity_index"
+  - symbol: "7203.T"
+    name: "Toyota Motor Corporation"
+    asset_class: "equity"
+    sector: "Consumer Discretionary"
+  - symbol: "6758.T"
+    name: "Sony Group Corporation"
+    asset_class: "equity"
+    sector: "Technology"
+  - symbol: "9984.T"
+    name: "SoftBank Group Corp."
+    asset_class: "equity"
+    sector: "Communication Services"
+  - symbol: "8306.T"
+    name: "Mitsubishi UFJ Financial Group"
+    asset_class: "equity"
+    sector: "Financials"
+
+macro_proxies:
+  - symbol: "JPY=X"
+    name: "USD/JPY Spot Rate"
+    category: "FX"
+  - symbol: "EWJ"
+    name: "iShares MSCI Japan ETF"
+    category: "Equity Proxy"
+
+transaction_costs:
+  brokerage_bps: 5.0        # 0.05%
+  clearing_fee_bps: 1.0
+  stamp_duty_bps: 0.0
+  bid_ask_spread_bps: 6.0   # 0.06%
+  default_slippage_bps: 4.0
+  minimum_commission: 50.0  # JPY 50

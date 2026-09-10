@@ -1,0 +1,52 @@
+market_code: US
+market_name: "United States"
+currency: USD
+timezone: "America/New_York"
+annual_trading_days: 252
+benchmark_symbol: "SPY"
+
+universe:
+  - symbol: "SPY"
+    name: "SPDR S&P 500 ETF Trust"
+    asset_class: "equity_index"
+  - symbol: "QQQ"
+    name: "Invesco QQQ Trust (Nasdaq-100)"
+    asset_class: "equity_index"
+  - symbol: "IWM"
+    name: "iShares Russell 2000 ETF"
+    asset_class: "equity_index"
+  - symbol: "AAPL"
+    name: "Apple Inc."
+    asset_class: "equity"
+    sector: "Technology"
+  - symbol: "MSFT"
+    name: "Microsoft Corporation"
+    asset_class: "equity"
+    sector: "Technology"
+  - symbol: "NVDA"
+    name: "NVIDIA Corporation"
+    asset_class: "equity"
+    sector: "Technology"
+  - symbol: "JPM"
+    name: "JPMorgan Chase & Co."
+    asset_class: "equity"
+    sector: "Financials"
+
+macro_proxies:
+  - symbol: "^VIX"
+    name: "CBOE Volatility Index"
+    category: "Volatility"
+  - symbol: "^TNX"
+    name: "CBOE 10 Year Treasury Yield"
+    category: "Rates"
+  - symbol: "DX-Y.NYB"
+    name: "US Dollar Index"
+    category: "FX"
+
+transaction_costs:
+  brokerage_bps: 2.0        # 0.02% or ~$0.005/share institutional
+  clearing_fee_bps: 0.5     # SEC/FINRA fees
+  stamp_duty_bps: 0.0
+  bid_ask_spread_bps: 3.0   # 0.03% tight large-cap spread
+  default_slippage_bps: 3.0 # 0.03% execution slippage
+  minimum_commission: 1.0   # USD 1.00 min

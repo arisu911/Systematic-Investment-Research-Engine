@@ -1,0 +1,38 @@
+market_code: EU
+market_name: "Europe"
+currency: EUR
+timezone: "Europe/Frankfurt"
+annual_trading_days: 255
+benchmark_symbol: "^GDAXI"
+
+universe:
+  - symbol: "^GDAXI"
+    name: "DAX Performance Index"
+    asset_class: "equity_index"
+  - symbol: "^FTSE"
+    name: "FTSE 100 Index"
+    asset_class: "equity_index"
+  - symbol: "^STOXX50E"
+    name: "EURO STOXX 50"
+    asset_class: "equity_index"
+  - symbol: "SAP.DE"
+    name: "SAP SE"
+    asset_class: "equity"
+    sector: "Technology"
+  - symbol: "MC.PA"
+    name: "LVMH Moet Hennessy Louis Vuitton"
+    asset_class: "equity"
+    sector: "Consumer Discretionary"
+
+macro_proxies:
+  - symbol: "EURUSD=X"
+    name: "EUR/USD Spot Rate"
+    category: "FX"
+
+transaction_costs:
+  brokerage_bps: 6.0
+  clearing_fee_bps: 1.5
+  stamp_duty_bps: 0.0
+  bid_ask_spread_bps: 7.0
+  default_slippage_bps: 5.0
+  minimum_commission: 3.0   # EUR 3.00
