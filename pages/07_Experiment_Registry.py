@@ -1,5 +1,13 @@
 """Experiment Registry: Search, Compare, and Audit Historical Research Runs."""
 
+import sys
+from pathlib import Path
+
+# Ensure src/ directory is on sys.path
+_SRC_PATH = str(Path(__file__).resolve().parents[1] / "src")
+if _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
+
 import streamlit as st
 import pandas as pd
 import json
