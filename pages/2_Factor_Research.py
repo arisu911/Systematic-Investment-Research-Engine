@@ -24,11 +24,14 @@ import plotly.express as px
 from data.aligner import load_universe_registry
 from data.loader import get_cached_universe_prices, get_all_universe_tickers
 from research.signals import SignalEngine
+from research.utils import inject_metric_css
 
 try:
     st.set_page_config(page_title="Factor Research", page_icon="🌐", layout="wide")
 except Exception:
     pass
+
+inject_metric_css()
 
 st.markdown(
     """

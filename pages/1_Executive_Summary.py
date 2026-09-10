@@ -28,12 +28,16 @@ from data.loader import get_cached_universe_prices
 from data.fx_engine import get_currency_symbol, FXEngine, SUPPORTED_CURRENCIES
 from research.strategies import StrategyDispatcher, STRATEGY_REGISTRY
 from research.execution import ExecutionEngine
+from research.utils import inject_metric_css, format_money
 from experiments.backtester import PortfolioBacktester
 
 try:
     st.set_page_config(page_title="Executive Summary & Orders", page_icon="🏛️", layout="wide")
 except Exception:
     pass
+
+# Inject global metric CSS to prevent ellipsis truncation
+inject_metric_css()
 
 # Retrieve Global Session State or Defaults
 capital = float(st.session_state.get("capital_amount", 100_000.0))
@@ -58,7 +62,7 @@ st.markdown(
                 </h2>
             </div>
             <div style="text-align: right; color: #848e9c; font-family: monospace; font-size: 12px;">
-                CAPITAL: <span style="color:#00c805; font-weight:700;">{curr_sym}{capital:,.2f}</span> | BASE: <span style="color:#fff;">{base_curr}</span>
+                CAPITAL: <span style="color:#00c805; font-weight:700;">{format_money(capital, base_curr)}</span> | BASE: <span style="color:#fff;">{base_curr}</span>
             </div>
         </div>
     </div>
@@ -141,19 +145,47 @@ backtester = PortfolioBacktester(
 )
 equity_df, summary = backtester.run_rebalancing_backtest(weights=weights, frequency="Monthly")
 
-# KPI Scorecard
+# Balanced 2x3 Grid of Executive KPI Metric Cards
 st.markdown("#### 📊 Nominal Performance Scorecard")
-k1, k2, k3, k4, k5, k6 = st.columns(6)
 
 ending_nav = summary["ending_nav"]
 nominal_gain = ending_nav - capital
-k1.metric(f"Ending NAV ({base_curr})", f"{curr_sym}{ending_nav:,.2f}", f"{curr_sym}{nominal_gain:+,.2f}")
-k2.metric("CAGR", f"{summary['cagr']:.2%}", f"vs {summary['benchmark_cagr']:.2%} Benchmark")
-k3.metric("Annual Volatility", f"{summary['annualized_volatility']:.2%}")
-k4.metric("Sharpe Ratio", f"{summary['sharpe_ratio']:.2f}")
 nominal_max_loss = summary["max_drawdown"] * capital
-k5.metric("Max Drawdown", f"{summary['max_drawdown']:.2%}", f"{curr_sym}{nominal_max_loss:,.2f}", delta_color="inverse")
-k6.metric("Calmar Ratio", f"{summary['calmar_ratio']:.2f}")
+
+row1_col1, row1_col2, row1_col3 = st.columns(3)
+row1_col1.metric(
+    f"Ending Portfolio NAV ({base_curr})",
+    format_money(ending_nav, base_curr),
+    f"{format_money(nominal_gain, base_curr)} ({summary['total_return']:+.1%})",
+)
+row1_col2.metric(
+    "Compound Annual Growth (CAGR)",
+    f"{summary['cagr']:.2%}",
+    f"vs {summary['benchmark_cagr']:.2%} Benchmark",
+)
+row1_col3.metric(
+    "Annualized Volatility",
+    f"{summary['annualized_volatility']:.2%}",
+    f"Sharpe Ratio: {summary['sharpe_ratio']:.2f}",
+)
+
+row2_col1, row2_col2, row2_col3 = st.columns(3)
+row2_col1.metric(
+    "Sharpe Ratio",
+    f"{summary['sharpe_ratio']:.2f}",
+    f"Sortino: {summary['sortino_ratio']:.2f}",
+)
+row2_col2.metric(
+    "Maximum Historical Drawdown",
+    f"{summary['max_drawdown']:.2%}",
+    f"{format_money(nominal_max_loss, base_curr)} Peak-to-Trough",
+    delta_color="inverse",
+)
+row2_col3.metric(
+    "Calmar Ratio",
+    f"{summary['calmar_ratio']:.2f}",
+    f"Frictions: {format_money(summary['total_friction_drag'], base_curr)}",
+)
 
 st.markdown("---")
 
@@ -161,7 +193,7 @@ st.markdown("---")
 c_left, c_right = st.columns([6, 4])
 
 with c_left:
-    st.markdown(f"#### 📈 Growth of {curr_sym}{capital:,.0f} Portfolio vs {benchmark_ticker}")
+    st.markdown(f"#### 📈 Growth of {format_money(capital, base_curr)} Portfolio vs {benchmark_ticker}")
 
     fig_equity = go.Figure()
     fig_equity.add_trace(
@@ -226,11 +258,11 @@ with c_right:
 
 st.markdown("---")
 
-# Execution Order Ticket Generator
-st.markdown("#### 🎫 Actionable Execution Order Ticket & Board Lot Sizing")
+# Execution Order Ticket Generator & Residual Reconciliation
+st.markdown("#### 🎫 Institutional Order Execution Ticket & Board Lot Sizing")
 st.caption(
-    "Translates percentage weights into tradeable lots. Applies **100-share board lot constraints** "
-    "to Bursa Malaysia counters (.KL) and whole shares to US, Japanese, and commodity proxies."
+    "Translates portfolio allocation weights into actionable exchange orders. Strictly enforces **100-share board lots** "
+    "for Bursa Malaysia counters (`.KL`) and whole-share sizing for US and Japanese equities."
 )
 
 latest_prices_map = {a: float(prices_df[a].iloc[-1]) for a in assets if a in prices_df.columns}
@@ -241,6 +273,7 @@ order_ticket = ExecutionEngine.generate_order_ticket(
     latest_prices=latest_prices_map,
     capital=capital,
     currency_symbol=curr_sym,
+    base_currency=base_curr,
     registry=registry,
 )
 
@@ -250,21 +283,43 @@ unallocated_pct = order_ticket["unallocated_cash_pct"]
 allocated = order_ticket["allocated_cash"]
 
 t_col1, t_col2, t_col3 = st.columns(3)
-t_col1.metric("Target Portfolio Capital", f"{curr_sym}{capital:,.2f}")
-t_col2.metric("Allocated Trade Capital", f"{curr_sym}{allocated:,.2f}", f"{allocated/capital:.1%} of Total")
-t_col3.metric("Unallocated Cash Remainder", f"{curr_sym}{unallocated:,.2f}", f"{unallocated_pct:.2%} Lot Rounding", delta_color="inverse")
+t_col1.metric("Target Portfolio Capital", format_money(capital, base_curr))
+t_col2.metric("Allocated Trade Capital", format_money(allocated, base_curr), f"{allocated/capital:.1%} of Total")
+t_col3.metric("Unallocated Cash Remainder", format_money(unallocated, base_curr), f"{unallocated_pct:.2%} Lot Rounding Buffer", delta_color="inverse")
 
-# Display table
-display_cols = ["Ticker", "Asset Name", "Region", "Target Weight", "Target Value", "Latest Price", "Order Quantity", "Effective Value", "Effective Weight"]
+# Strict DataFrame Column Configuration
+ticket_display = pd.DataFrame({
+    "Ticker": ticket_df["Ticker"],
+    "Name": ticket_df["Asset Name"],
+    "Exchange": ticket_df["Exchange"],
+    "Target Weight": ticket_df["target_weight_num"],
+    "Target Value": ticket_df["target_cash_num"],
+    "Price": ticket_df["price_num"],
+    "Units": ticket_df["units_num"],
+    "Allocated Capital": ticket_df["allocated_cash_num"],
+    "Effective Weight": ticket_df["effective_weight_num"],
+})
+
 st.dataframe(
-    ticket_df[display_cols],
+    ticket_display,
     use_container_width=True,
     hide_index=True,
+    column_config={
+        "Ticker": st.column_config.TextColumn("Ticker", width="small"),
+        "Name": st.column_config.TextColumn("Asset Name", width="medium"),
+        "Exchange": st.column_config.TextColumn("Exchange", width="medium"),
+        "Target Weight": st.column_config.NumberColumn("Target Weight (%)", format="%.2f %%"),
+        "Target Value": st.column_config.NumberColumn(f"Target Value ({base_curr})", format=f"{curr_sym}%,.2f"),
+        "Price": st.column_config.NumberColumn(f"Current Price ({base_curr})", format=f"{curr_sym}%,.2f"),
+        "Units": st.column_config.NumberColumn("Target Units (Board Lot Compliant)", format="%d"),
+        "Allocated Capital": st.column_config.NumberColumn(f"Allocated Capital ({base_curr})", format=f"{curr_sym}%,.2f"),
+        "Effective Weight": st.column_config.NumberColumn("Effective Weight (%)", format="%.2f %%"),
+    },
 )
 
 # Export Order Ticket Action
 st.download_button(
-    label="📥 Download Execution Order Ticket (CSV)",
+    label="📥 Export Order Ticket (CSV)",
     data=order_ticket["csv_string"],
     file_name="order_ticket.csv",
     mime="text/csv",

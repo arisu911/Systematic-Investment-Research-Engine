@@ -27,12 +27,16 @@ from data.loader import get_cached_universe_prices
 from data.fx_engine import get_currency_symbol, FXEngine, SUPPORTED_CURRENCIES
 from research.strategies import StrategyDispatcher, STRATEGY_REGISTRY
 from research.risk import RiskEngine
+from research.utils import inject_metric_css, format_money
 from experiments.stress_test import StressTestEngine
 
 try:
     st.set_page_config(page_title="Nominal Risk Engine", page_icon="🛡️", layout="wide")
 except Exception:
     pass
+
+# Inject global metric CSS to prevent ellipsis truncation
+inject_metric_css()
 
 # Retrieve Global Session State or Defaults
 capital = float(st.session_state.get("capital_amount", 100_000.0))
@@ -56,7 +60,7 @@ st.markdown(
                 </h2>
             </div>
             <div style="text-align: right; color: #848e9c; font-family: monospace; font-size: 12px;">
-                CAPITAL: <span style="color:#f59e0b; font-weight:700;">{curr_sym}{capital:,.2f}</span> | BASE: <span style="color:#fff;">{base_curr}</span>
+                CAPITAL: <span style="color:#f59e0b; font-weight:700;">{format_money(capital, base_curr)}</span> | BASE: <span style="color:#fff;">{base_curr}</span>
             </div>
         </div>
     </div>
@@ -104,7 +108,7 @@ if len(available_tradable) < 3:
     st.stop()
 
 # Returns calculation (accounting for hedged vs unhedged returns)
-returns_df = FXEngine.calculate_asset_returns(prices_df[available_tradable], hedged=is_hedged)
+returns_df = FXEngine.calculate_asset_returns(prices_df[available_tradable], target_currency=base_curr, is_hedged=is_hedged)
 
 # Dispatch active strategy weights
 strat_res = StrategyDispatcher.dispatch(
@@ -143,25 +147,25 @@ var_21d_99 = multi_var_df[(multi_var_df["Horizon_Days"] == 21) & (multi_var_df["
 c_m1, c_m2, c_m3, c_m4 = st.columns(4)
 c_m1.metric(
     "95% 1-Day Cornish-Fisher VaR",
-    f"-{curr_sym}{var_1d_95['Nominal_Cornish_Fisher_VaR']:,.2f}",
+    format_money(-var_1d_95["Nominal_Cornish_Fisher_VaR"], base_curr),
     f"{var_1d_95['Cornish_Fisher_VaR_Pct']:.2%} of capital",
     delta_color="inverse",
 )
 c_m2.metric(
     "99% 1-Day Cornish-Fisher VaR",
-    f"-{curr_sym}{var_1d_99['Nominal_Cornish_Fisher_VaR']:,.2f}",
+    format_money(-var_1d_99["Nominal_Cornish_Fisher_VaR"], base_curr),
     f"{var_1d_99['Cornish_Fisher_VaR_Pct']:.2%} of capital",
     delta_color="inverse",
 )
 c_m3.metric(
     "99% 5-Day (1-Wk) mVaR",
-    f"-{curr_sym}{var_5d_99['Nominal_Cornish_Fisher_VaR']:,.2f}",
+    format_money(-var_5d_99["Nominal_Cornish_Fisher_VaR"], base_curr),
     f"{var_5d_99['Cornish_Fisher_VaR_Pct']:.2%} of capital",
     delta_color="inverse",
 )
 c_m4.metric(
     "99% 21-Day (1-Mo) mVaR",
-    f"-{curr_sym}{var_21d_99['Nominal_Cornish_Fisher_VaR']:,.2f}",
+    format_money(-var_21d_99["Nominal_Cornish_Fisher_VaR"], base_curr),
     f"{var_21d_99['Cornish_Fisher_VaR_Pct']:.2%} of capital",
     delta_color="inverse",
 )
@@ -169,26 +173,40 @@ c_m4.metric(
 # Highlight Callout Banner
 st.markdown(
     f"""
-    <div style="background-color: #1a1e29; border: 1px solid #374151; padding: 10px 16px; border-radius: 4px; margin: 12px 0; font-family: monospace; font-size: 13px;">
-        🛡️ <b>INSTITUTIONAL RISK CALLOUT:</b> 99% 1-Day Cornish-Fisher VaR is <span style="color:#ef4444; font-weight:700;">-{curr_sym}{var_1d_99['Nominal_Cornish_Fisher_VaR']:,.2f}</span>
-        on <span style="color:#ffffff; font-weight:700;">{curr_sym}{capital:,.2f}</span> active capital.
-        (Parametric VaR: -{curr_sym}{var_1d_99['Nominal_Parametric_VaR']:,.2f} | Historical VaR: -{curr_sym}{var_1d_99['Nominal_Historical_VaR']:,.2f} | 1-Day mCVaR: -{curr_sym}{var_1d_99['Nominal_Cornish_Fisher_CVaR']:,.2f})
+    <div style="background-color: #1a1e29; border: 1px solid #374151; padding: 12px 18px; border-radius: 4px; margin: 14px 0; font-family: monospace; font-size: 13px;">
+        🛡️ <b>INSTITUTIONAL RISK CALLOUT:</b> 99% 1-Day Cornish-Fisher VaR is <span style="color:#ef4444; font-weight:700;">{format_money(-var_1d_99['Nominal_Cornish_Fisher_VaR'], base_curr)}</span>
+        on <span style="color:#ffffff; font-weight:700;">{format_money(capital, base_curr)}</span> active capital.
+        (Parametric VaR: {format_money(-var_1d_99['Nominal_Parametric_VaR'], base_curr)} | Historical VaR: {format_money(-var_1d_99['Nominal_Historical_VaR'], base_curr)} | 1-Day mCVaR: {format_money(-var_1d_99['Nominal_Cornish_Fisher_CVaR'], base_curr)})
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# Detailed Multi-Horizon Cash-at-Risk Table
+# Detailed Multi-Horizon Cash-at-Risk Table with Strict Column Config
 display_var_table = pd.DataFrame({
     "Horizon": multi_var_df["Horizon"],
     "Confidence": multi_var_df["Confidence"],
-    "Cornish-Fisher mVaR (%)": multi_var_df["Cornish_Fisher_VaR_Pct"].map(lambda x: f"{x:.2%}"),
-    f"Nominal mVaR ({base_curr})": multi_var_df["Nominal_Cornish_Fisher_VaR"].map(lambda x: f"-{curr_sym}{x:,.2f}"),
-    f"Nominal mCVaR ({base_curr})": multi_var_df["Nominal_Cornish_Fisher_CVaR"].map(lambda x: f"-{curr_sym}{x:,.2f}"),
-    f"Parametric VaR ({base_curr})": multi_var_df["Nominal_Parametric_VaR"].map(lambda x: f"-{curr_sym}{x:,.2f}"),
-    f"Historical VaR ({base_curr})": multi_var_df["Nominal_Historical_VaR"].map(lambda x: f"-{curr_sym}{x:,.2f}"),
+    "Cornish-Fisher mVaR": multi_var_df["Cornish_Fisher_VaR_Pct"],
+    "Nominal mVaR": -multi_var_df["Nominal_Cornish_Fisher_VaR"],
+    "Nominal mCVaR": -multi_var_df["Nominal_Cornish_Fisher_CVaR"],
+    "Parametric VaR": -multi_var_df["Nominal_Parametric_VaR"],
+    "Historical VaR": -multi_var_df["Nominal_Historical_VaR"],
 })
-st.dataframe(display_var_table, use_container_width=True, hide_index=True)
+
+st.dataframe(
+    display_var_table,
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "Horizon": st.column_config.TextColumn("Horizon", width="medium"),
+        "Confidence": st.column_config.TextColumn("Confidence", width="small"),
+        "Cornish-Fisher mVaR": st.column_config.NumberColumn("Cornish-Fisher mVaR (%)", format="%.2f %%"),
+        "Nominal mVaR": st.column_config.NumberColumn(f"Nominal mVaR ({base_curr})", format=f"{curr_sym}%,.2f"),
+        "Nominal mCVaR": st.column_config.NumberColumn(f"Nominal mCVaR ({base_curr})", format=f"{curr_sym}%,.2f"),
+        "Parametric VaR": st.column_config.NumberColumn(f"Parametric VaR ({base_curr})", format=f"{curr_sym}%,.2f"),
+        "Historical VaR": st.column_config.NumberColumn(f"Historical VaR ({base_curr})", format=f"{curr_sym}%,.2f"),
+    },
+)
 
 st.markdown("---")
 
@@ -222,12 +240,12 @@ with c_dist:
 
     fig_hist.add_vline(
         x=cf_cutoff, line_dash="solid", line_color="#ef4444", line_width=2,
-        annotation_text=f"CF VaR 95% (-{curr_sym}{var_1d_95['Nominal_Cornish_Fisher_VaR']:,.0f})",
+        annotation_text=f"CF VaR 95% ({format_money(-var_1d_95['Nominal_Cornish_Fisher_VaR'], base_curr)})",
         annotation_position="top left",
     )
     fig_hist.add_vline(
         x=param_cutoff, line_dash="dash", line_color="#94a3b8", line_width=1.5,
-        annotation_text=f"Parametric (-{curr_sym}{var_1d_95['Nominal_Parametric_VaR']:,.0f})",
+        annotation_text=f"Parametric ({format_money(-var_1d_95['Nominal_Parametric_VaR'], base_curr)})",
         annotation_position="bottom left",
     )
 
@@ -333,17 +351,31 @@ fig_rc.update_layout(
 )
 st.plotly_chart(fig_rc, use_container_width=True, config={"displayModeBar": False, "responsive": True})
 
-# Summary Table of Risk Attribution
+# Summary Table of Risk Attribution with Strict Column Config
 rc_table = pd.DataFrame({
     "Ticker": rc_df["Asset"],
     "Asset Name": rc_df["Name"],
-    "Weight (%)": rc_df["Weight"].map(lambda x: f"{x:.2%}"),
-    f"Nominal Capital ({base_curr})": (rc_df["Weight"] * capital).map(lambda x: f"{curr_sym}{x:,.2f}"),
-    "Risk Contribution (%RC)": rc_df["Pct_Risk_Contribution"].map(lambda x: f"{x:.2%}"),
-    f"Nominal Risk ({base_curr})": rc_df["Nominal_Risk_Contribution"].map(lambda x: f"{curr_sym}{x:,.2f}"),
-    "Marginal Volatility (MCR)": rc_df["Marginal_Risk_Contribution"].map(lambda x: f"{x:.4f}"),
+    "Weight": rc_df["Weight"],
+    "Nominal Capital": rc_df["Weight"] * capital,
+    "Risk Contribution": rc_df["Pct_Risk_Contribution"],
+    "Nominal Risk": rc_df["Nominal_Risk_Contribution"],
+    "Marginal Volatility (MCR)": rc_df["Marginal_Risk_Contribution"],
 })
-st.dataframe(rc_table, use_container_width=True, hide_index=True)
+
+st.dataframe(
+    rc_table,
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "Ticker": st.column_config.TextColumn("Ticker", width="small"),
+        "Asset Name": st.column_config.TextColumn("Asset Name", width="medium"),
+        "Weight": st.column_config.NumberColumn("Weight (%)", format="%.2f %%"),
+        "Nominal Capital": st.column_config.NumberColumn(f"Nominal Capital ({base_curr})", format=f"{curr_sym}%,.2f"),
+        "Risk Contribution": st.column_config.NumberColumn("Risk Contribution (%RC)", format="%.2f %%"),
+        "Nominal Risk": st.column_config.NumberColumn(f"Nominal Risk ({base_curr})", format=f"{curr_sym}%,.2f"),
+        "Marginal Volatility (MCR)": st.column_config.NumberColumn("Marginal MCR", format="%.4f"),
+    },
+)
 
 st.markdown("---")
 
@@ -355,12 +387,12 @@ c_dd1, c_dd2 = st.columns(2)
 c_dd1.metric(
     "Historical Maximum Drawdown",
     f"{max_dd_pct:.2%}",
-    f"-{curr_sym}{abs(nominal_max_dd):,.2f} Max Capital Loss",
+    f"{format_money(nominal_max_dd, base_curr)} Peak Loss",
     delta_color="inverse",
 )
 c_dd2.metric(
     "Total Portfolio Capital",
-    f"{curr_sym}{capital:,.2f}",
+    format_money(capital, base_curr),
     f"Base Currency: {base_curr}",
 )
 
@@ -375,27 +407,51 @@ c_shock1, c_shock2 = st.columns([5, 5])
 with c_shock1:
     st.markdown("##### Predefined Macro Shocks (Nominal Loss)")
     scenarios = stress_engine.run_standard_macro_scenarios(weights, capital=capital)
-    scen_rows = []
-    for s in scenarios:
-        scen_rows.append({
+    scen_df = pd.DataFrame([
+        {
             "Scenario": s["scenario_name"],
             "Factor": s["factor"],
-            "Shock": f"{s['shock_magnitude_pct']:+.0%}",
-            "Portfolio Impact (%)": f"{s['portfolio_impact_pct']:+.2%}",
-            f"Nominal Impact ({base_curr})": f"{curr_sym}{s['nominal_portfolio_impact']:+,.2f}",
-        })
-    st.dataframe(pd.DataFrame(scen_rows), use_container_width=True, hide_index=True)
+            "Shock": s["shock_magnitude_pct"],
+            "Impact": s["portfolio_impact_pct"],
+            "Nominal Impact": s["nominal_portfolio_impact"],
+        }
+        for s in scenarios
+    ])
+    st.dataframe(
+        scen_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Scenario": st.column_config.TextColumn("Scenario", width="medium"),
+            "Factor": st.column_config.TextColumn("Factor", width="small"),
+            "Shock": st.column_config.NumberColumn("Shock (%)", format="%+.0f %%"),
+            "Impact": st.column_config.NumberColumn("Impact (%)", format="%+.2f %%"),
+            "Nominal Impact": st.column_config.NumberColumn(f"Nominal Loss ({base_curr})", format=f"{curr_sym}%+,.2f"),
+        },
+    )
 
 with c_shock2:
     st.markdown("##### Historical Crisis Replay (Nominal Loss)")
     crises = stress_engine.replay_historical_crises(weights, capital=capital)
-    crisis_rows = []
-    for c in crises:
-        crisis_rows.append({
-            "Crisis Scenario": c["Crisis"],
+    crisis_df = pd.DataFrame([
+        {
+            "Crisis": c["Crisis"],
             "Period": c["Period"],
-            "Max Drawdown (%)": f"{c['Estimated_Max_Drawdown']:.1%}",
-            f"Nominal Drawdown ({base_curr})": f"-{curr_sym}{abs(c['Nominal_Max_Drawdown']):,.2f}",
-            "Evaluation": c["Evaluation_Mode"],
-        })
-    st.dataframe(pd.DataFrame(crisis_rows), use_container_width=True, hide_index=True)
+            "Max Drawdown": c["Estimated_Max_Drawdown"],
+            "Nominal Loss": c["Nominal_Max_Drawdown"],
+            "Mode": c["Evaluation_Mode"],
+        }
+        for c in crises
+    ])
+    st.dataframe(
+        crisis_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Crisis": st.column_config.TextColumn("Crisis Scenario", width="medium"),
+            "Period": st.column_config.TextColumn("Period", width="medium"),
+            "Max Drawdown": st.column_config.NumberColumn("Max Drawdown (%)", format="%.1f %%"),
+            "Nominal Loss": st.column_config.NumberColumn(f"Nominal Drawdown ({base_curr})", format=f"{curr_sym}%,.2f"),
+            "Mode": st.column_config.TextColumn("Evaluation", width="small"),
+        },
+    )

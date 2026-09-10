@@ -100,9 +100,20 @@ class ExecutionEngine:
             allocated_total += effective_cash
             meta = registry.get(ticker, {})
 
+            # Map exchange cleanly
+            if ".KL" in ticker:
+                exchange = "Bursa Malaysia"
+            elif ".T" in ticker:
+                exchange = "Tokyo Stock Exchange (TSE)"
+            elif ticker in ["GC=F", "BZ=F", "HG=F", "^TNX", "^VIX"]:
+                exchange = "Futures / Macro"
+            else:
+                exchange = "NYSE / NASDAQ"
+
             records.append({
                 "Ticker": ticker,
                 "Asset Name": meta.get("name", ticker),
+                "Exchange": exchange,
                 "Region": meta.get("region", "OTHER"),
                 "Target Weight (%)": f"{w_target:.2%}",
                 "Target Cash Value": f"{currency_symbol}{target_cash:,.2f}",
@@ -110,6 +121,13 @@ class ExecutionEngine:
                 "Order Quantity (Shares/Units)": order_qty,
                 "Effective Cash Value": f"{currency_symbol}{effective_cash:,.2f}",
                 "Effective Weight (%)": f"{effective_weight:.2%}",
+                # Explicit numeric columns for st.column_config
+                "target_weight_num": w_target,
+                "target_cash_num": target_cash,
+                "price_num": price,
+                "units_num": order_qty,
+                "allocated_cash_num": effective_cash,
+                "effective_weight_num": effective_weight,
                 # Legacy / short aliases for flexibility
                 "Target Weight": f"{w_target:.2%}",
                 "Target Value": f"{currency_symbol}{target_cash:,.2f}",
@@ -140,12 +158,13 @@ class ExecutionEngine:
     def export_order_ticket_csv(order_ticket_df: pd.DataFrame) -> str:
         """Convert order ticket dataframe to standardized CSV export string."""
         if order_ticket_df.empty:
-            return "Ticker,Asset Name,Target Weight (%),Target Cash Value,Current Price (Base FX),Order Quantity (Shares/Units),Effective Weight (%)\n"
+            return "Ticker,Asset Name,Exchange,Target Weight (%),Target Cash Value,Current Price (Base FX),Order Quantity (Shares/Units),Effective Weight (%)\n"
 
         cols_to_export = [
             c for c in [
                 "Ticker",
                 "Asset Name",
+                "Exchange",
                 "Target Weight (%)",
                 "Target Cash Value",
                 "Current Price (Base FX)",

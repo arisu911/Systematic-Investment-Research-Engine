@@ -98,12 +98,15 @@ class PortfolioBacktester:
         self,
         weights: np.ndarray,
         frequency: str = "Monthly",
+        friction_bps: Optional[float] = None,
     ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
         """Run periodic rebalancing simulation with transaction cost friction and cash drag.
         
         Args:
             weights: Target portfolio weights vector summing to 1.0
             frequency: 'Daily', 'Monthly', 'Quarterly', 'Annual'
+            friction_bps: Optional interactive friction/slippage in basis points.
+                          If None, applies regional statutory costs (Bursa stamp duty, etc.).
         """
         w_target = np.array(weights) / np.sum(weights)
         dates = self.returns_df.index
@@ -131,9 +134,14 @@ class PortfolioBacktester:
         rebalance_records = []
 
         # Initial allocation fee
-        for i, a in enumerate(self.assets):
-            total_costs += self.compute_asset_transaction_cost(a, curr_values[i])
-        nav[0] -= total_costs
+        if friction_bps is not None:
+            initial_friction = float(self.initial_capital * np.sum(np.abs(w_target)) * (friction_bps / 10000.0) / 2.0)
+            total_costs += initial_friction
+            nav[0] -= initial_friction
+        else:
+            for i, a in enumerate(self.assets):
+                total_costs += self.compute_asset_transaction_cost(a, curr_values[i])
+            nav[0] -= total_costs
 
         for t in range(1, n_days):
             day_ret = self.returns_df.iloc[t].values
@@ -149,15 +157,23 @@ class PortfolioBacktester:
             if rebal_mask[t]:
                 target_values = port_value * w_target
                 trade_diffs = target_values - curr_values
-                day_friction = sum(
-                    self.compute_asset_transaction_cost(self.assets[i], abs(trade_diffs[i]))
-                    for i in range(n_assets)
-                )
+
+                if friction_bps is not None:
+                    w_curr = curr_values / port_value if port_value > 1e-6 else w_target
+                    turnover_t = float(np.sum(np.abs(w_target - w_curr)))
+                    day_friction = float(port_value * (turnover_t / 2.0) * (friction_bps / 10000.0))
+                    turnover_amt = (turnover_t / 2.0) * port_value
+                else:
+                    day_friction = sum(
+                        self.compute_asset_transaction_cost(self.assets[i], abs(trade_diffs[i]))
+                        for i in range(n_assets)
+                    )
+                    turnover_amt = np.sum(np.abs(trade_diffs)) / 2.0
+
                 port_value -= day_friction
                 total_costs += day_friction
                 curr_values = port_value * w_target
 
-                turnover_amt = np.sum(np.abs(trade_diffs)) / 2.0
                 rebalance_records.append({
                     "Date": dates[t],
                     "Turnover": float(turnover_amt),
@@ -187,8 +203,14 @@ class PortfolioBacktester:
 
         # Performance summary metrics
         total_ret = float(nav[-1] / nav[0]) - 1.0
+        gross_ending = float(gross_nav[-1])
+        gross_tot = float(gross_ending / gross_nav[0]) - 1.0
+
         n_years = max(1.0 / self.annual_days, n_days / self.annual_days)
         cagr = float((1.0 + total_ret) ** (1.0 / n_years)) - 1.0
+        gross_cagr = float((1.0 + gross_tot) ** (1.0 / n_years)) - 1.0
+        friction_drag_bps = float((gross_cagr - cagr) * 10000.0)
+
         ann_vol = float(daily_port_ret.std() * np.sqrt(self.annual_days))
         sharpe = (cagr - 0.040) / ann_vol if ann_vol > 1e-4 else 0.0
 
@@ -205,9 +227,13 @@ class PortfolioBacktester:
         summary = {
             "initial_capital": self.initial_capital,
             "ending_nav": float(nav[-1]),
+            "gross_ending_nav": gross_ending,
             "total_return": total_ret,
+            "gross_total_return": gross_tot,
             "cagr": cagr,
             "CAGR": cagr,
+            "gross_cagr": gross_cagr,
+            "friction_drag_bps": friction_drag_bps,
             "annualized_volatility": ann_vol,
             "sharpe_ratio": sharpe,
             "sortino_ratio": sortino,
@@ -217,6 +243,7 @@ class PortfolioBacktester:
             "total_friction_drag": float(total_costs),
             "Total_Fees_Paid": float(total_costs),
             "rebalance_count": len(rebalance_records),
+            "total_turnover": float(sum(r["Turnover"] for r in rebalance_records)),
             "start_date": str(dates[0].strftime("%Y-%m-%d")),
             "end_date": str(dates[-1].strftime("%Y-%m-%d")),
         }

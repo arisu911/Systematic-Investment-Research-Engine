@@ -23,6 +23,7 @@ from data.aligner import load_universe_registry, get_tradable_tickers
 from data.loader import get_cached_universe_prices, get_all_universe_tickers
 from data.fx_engine import SUPPORTED_CURRENCIES, get_currency_symbol, FXEngine
 from research.strategies import STRATEGY_REGISTRY
+from research.utils import inject_metric_css, format_money
 
 # Global Terminal Page Configuration
 try:
@@ -34,6 +35,9 @@ try:
     )
 except Exception:
     pass
+
+# Inject global metric CSS to prevent ellipsis truncation across all pages
+inject_metric_css()
 
 # Initialize Global Session State Defaults
 if "capital_amount" not in st.session_state:

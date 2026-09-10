@@ -1,0 +1,22 @@
+/* Global High-Contrast Institutional Dark Terminal Styles */
+
+[data-testid="stMetricValue"] {
+    font-size: clamp(1.1rem, 1.8vw, 1.5rem) !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+    line-height: 1.2 !important;
+}
+
+[data-testid="stMetricLabel"] {
+    font-size: 0.82rem !important;
+    color: #8b949e !important;
+}
+
+[data-testid="metric-container"] {
+    padding: 0.75rem !important;
+    background-color: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+}

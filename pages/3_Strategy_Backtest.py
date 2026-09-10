@@ -2,9 +2,10 @@
 
 Displays:
 1. Portfolio Equity Curve (Net NAV vs Gross NAV vs Benchmark NAV).
-2. Underwater Drawdown Profiles & Maximum Peak-to-Trough Metrics.
-3. In-Sample vs. Out-of-Sample Walk-Forward Stability Table (WFE Metric).
-4. Periodic Rebalancing Turnover Ledger & Friction Cost Attrition.
+2. Interactive Friction & Slippage Slider (0 - 50 bps).
+3. Friction Drag & Cumulative Fee Attrition Breakdown.
+4. Underwater Drawdown Profiles & Maximum Peak-to-Trough Metrics.
+5. In-Sample vs. Out-of-Sample Walk-Forward Stability Table (WFE Metric).
 """
 
 import sys
@@ -25,12 +26,16 @@ from data.loader import get_cached_universe_prices
 from data.fx_engine import get_currency_symbol, SUPPORTED_CURRENCIES
 from research.strategies import StrategyDispatcher, STRATEGY_REGISTRY
 from research.optimization import PortfolioOptimizer
+from research.utils import inject_metric_css, format_money
 from experiments.backtester import PortfolioBacktester
 
 try:
     st.set_page_config(page_title="Strategy Backtest", page_icon="📈", layout="wide")
 except Exception:
     pass
+
+# Inject global metric CSS to prevent ellipsis truncation
+inject_metric_css()
 
 st.markdown(
     """
@@ -74,6 +79,16 @@ benchmarks = ["^GSPC", "^KLSE", "^N225", "^NDX", "^RUT"]
 cur_bench_idx = benchmarks.index(bench_choice_default) if bench_choice_default in benchmarks else 0
 bench_choice = b_c4.selectbox("Benchmark", benchmarks, index=cur_bench_idx)
 
+# Interactive Slippage & Friction Slider
+friction_bps = st.slider(
+    "Rebalancing Friction / Slippage (bps)",
+    min_value=0,
+    max_value=50,
+    value=10,
+    step=1,
+    help="Realistic trading frictions including brokerage commissions, exchange clearing, bid-ask spread, and stamp duty per turnover event.",
+)
+
 with st.spinner("Executing strategy dispatch and portfolio rebalancing simulation..."):
     prices_df, is_demo = get_cached_universe_prices(
         start_date="2019-01-01",
@@ -115,28 +130,61 @@ backtester = PortfolioBacktester(
     initial_capital=capital,
 )
 
-equity_df, summary = backtester.run_rebalancing_backtest(weights=weights, frequency=rebal_freq)
+equity_df, summary = backtester.run_rebalancing_backtest(
+    weights=weights,
+    frequency=rebal_freq,
+    friction_bps=float(friction_bps),
+)
 
-# Top KPIs
-m1, m2, m3, m4, m5, m6 = st.columns(6)
-m1.metric(f"Final NAV ({base_curr})", f"{curr_sym}{summary['ending_nav']:,.0f}", f"{summary['total_return']:+.1%}")
-m2.metric("CAGR", f"{summary['cagr']:.2%}")
-m3.metric("Annual Volatility", f"{summary['annualized_volatility']:.2%}")
-m4.metric("Sharpe Ratio", f"{summary['sharpe_ratio']:.2f}")
-m5.metric("Max Drawdown", f"{summary['max_drawdown']:.2%}", delta_color="inverse")
-m6.metric("Total Frictions", f"{curr_sym}{summary['total_friction_drag']:,.2f}")
+# Top KPI Balanced Metric Grid (2x3)
+st.markdown("#### 📊 Strategy Performance & Friction Drag Matrix")
+k_row1_c1, k_row1_c2, k_row1_c3 = st.columns(3)
+k_row1_c1.metric(
+    f"Final Net NAV ({base_curr})",
+    format_money(summary["ending_nav"], base_curr),
+    f"{summary['total_return']:+.1%} Total Net Return",
+)
+k_row1_c2.metric(
+    f"Gross Ending NAV (Zero Drag)",
+    format_money(summary["gross_ending_nav"], base_curr),
+    f"{summary['gross_total_return']:+.1%} Gross Return",
+)
+k_row1_c3.metric(
+    "Friction & Slippage Drag",
+    format_money(summary["total_friction_drag"], base_curr),
+    f"-{summary['friction_drag_bps']:.1f} bps CAGR Impact",
+    delta_color="inverse",
+)
+
+k_row2_c1, k_row2_c2, k_row2_c3 = st.columns(3)
+k_row2_c1.metric(
+    "Net CAGR",
+    f"{summary['cagr']:.2%}",
+    f"vs {summary['gross_cagr']:.2%} Gross ({summary['benchmark_cagr']:.2%} Bench)",
+)
+k_row2_c2.metric(
+    "Sharpe Ratio (Net)",
+    f"{summary['sharpe_ratio']:.2f}",
+    f"Sortino: {summary['sortino_ratio']:.2f} | Vol: {summary['annualized_volatility']:.2%}",
+)
+k_row2_c3.metric(
+    "Maximum Drawdown",
+    f"{summary['max_drawdown']:.2%}",
+    f"Calmar: {summary['calmar_ratio']:.2f}",
+    delta_color="inverse",
+)
 
 st.markdown("---")
 
 # Chart 1: Equity Curves
-st.markdown("#### 📈 Net Equity NAV vs Gross NAV vs Benchmark")
+st.markdown(f"#### 📈 Net Equity NAV vs Gross NAV vs Benchmark ({bench_choice})")
 
 fig_eq = go.Figure()
 fig_eq.add_trace(
     go.Scatter(
         x=equity_df.index,
         y=equity_df["NAV"],
-        name="Net NAV (Post-Friction)",
+        name=f"Net NAV ({friction_bps} bps Slippage)",
         line=dict(color="#00c805", width=2.5),
         hovertemplate=f"{curr_sym}%{{y:,.2f}}<extra></extra>",
     )
@@ -146,7 +194,7 @@ fig_eq.add_trace(
         x=equity_df.index,
         y=equity_df["Gross_NAV"],
         name="Gross NAV (Zero Frictions)",
-        line=dict(color="#38bdf8", width=1.5, dash="dash"),
+        line=dict(color="#38bdf8", width=1.8, dash="dash"),
         hovertemplate=f"{curr_sym}%{{y:,.2f}}<extra></extra>",
     )
 )
@@ -155,7 +203,7 @@ fig_eq.add_trace(
         x=equity_df.index,
         y=equity_df["Benchmark_NAV"],
         name=f"Benchmark ({bench_choice})",
-        line=dict(color="#64748b", width=1.5, dash="dot"),
+        line=dict(color="#94a3b8", width=1.5, dash="dot"),
         hovertemplate=f"{curr_sym}%{{y:,.2f}}<extra></extra>",
     )
 )
@@ -214,15 +262,23 @@ with c_wf:
     wf_slices = backtester.run_walk_forward_validation(wf_weight_func, train_window=504, test_window=126)
     if wf_slices:
         wf_df = pd.DataFrame(wf_slices)
-        wf_display = wf_df[["slice_id", "train_end", "test_end", "in_sample_sharpe", "out_of_sample_sharpe", "walk_forward_efficiency"]].copy()
+        wf_display = pd.DataFrame({
+            "Slice": wf_df["slice_id"],
+            "Train End": wf_df["train_end"],
+            "Test End": wf_df["test_end"],
+            "IS Sharpe": wf_df["in_sample_sharpe"],
+            "OOS Sharpe": wf_df["out_of_sample_sharpe"],
+            "Walk-Forward Efficiency": wf_df["walk_forward_efficiency"],
+        })
         st.dataframe(
-            wf_display.style.format({
-                "in_sample_sharpe": "{:.2f}",
-                "out_of_sample_sharpe": "{:.2f}",
-                "walk_forward_efficiency": "{:.2f}",
-            }),
+            wf_display,
             use_container_width=True,
             hide_index=True,
+            column_config={
+                "IS Sharpe": st.column_config.NumberColumn("IS Sharpe", format="%.2f"),
+                "OOS Sharpe": st.column_config.NumberColumn("OOS Sharpe", format="%.2f"),
+                "Walk-Forward Efficiency": st.column_config.NumberColumn("WFE Ratio", format="%.2f"),
+            },
         )
     else:
         st.info("Insufficient history for rolling 504d/126d walk-forward slices.")

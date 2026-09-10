@@ -60,3 +60,29 @@ def test_zero_turnover_preserves_cash():
     assert (res_df["Equity"] == 100_000.0).all()
     assert summary["total_fees_paid"] == 0.0
     assert len(ledger.trades) == 0
+
+
+def test_portfolio_backtester_friction_bps_scaling():
+    from experiments.backtester import PortfolioBacktester
+    
+    dates = pd.date_range("2021-01-01", periods=100, freq="B")
+    prices_df = pd.DataFrame({
+        "ASSET1": np.linspace(100, 150, 100),
+        "ASSET2": np.linspace(100, 120, 100),
+    }, index=dates)
+
+    weights = np.array([0.60, 0.40])
+    
+    bt_zero = PortfolioBacktester(prices_df=prices_df, initial_capital=100_000.0)
+    _, sum_zero = bt_zero.run_rebalancing_backtest(weights=weights, frequency="Monthly", friction_bps=0.0)
+    
+    bt_fee = PortfolioBacktester(prices_df=prices_df, initial_capital=100_000.0)
+    _, sum_fee = bt_fee.run_rebalancing_backtest(weights=weights, frequency="Monthly", friction_bps=20.0)
+    
+    # Net NAV under 20 bps friction must be strictly less than zero friction
+    assert sum_fee["ending_nav"] < sum_zero["ending_nav"]
+    assert sum_fee["total_friction_drag"] > 0.0
+    assert np.isclose(sum_zero["total_friction_drag"], 0.0)
+    assert sum_fee["friction_drag_bps"] > 0.0
+    assert "gross_ending_nav" in sum_fee
+
