@@ -22,11 +22,11 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from data.aligner import load_universe_registry, get_tradable_tickers
-from data.loader import get_cached_universe_prices
+from data.loader import get_cached_universe_prices, compute_lookback_dates, LOOKBACK_HORIZONS
 from data.fx_engine import get_currency_symbol, SUPPORTED_CURRENCIES
 from research.strategies import StrategyDispatcher, STRATEGY_REGISTRY
 from research.optimization import PortfolioOptimizer
-from research.utils import inject_metric_css, format_money
+from research.utils import inject_metric_css, format_money, render_data_freshness_badge, render_backfill_warning_badge
 from experiments.backtester import PortfolioBacktester
 
 try:
@@ -36,6 +36,19 @@ except Exception:
 
 # Inject global metric CSS to prevent ellipsis truncation
 inject_metric_css()
+
+# Retrieve Global Session State
+capital = float(st.session_state.get("capital_amount", 100_000.0))
+base_curr = st.session_state.get("selected_currency", "USD")
+active_strat = st.session_state.get("selected_strategy", "max_sharpe")
+bench_choice_default = st.session_state.get("benchmark_ticker", "^GSPC")
+is_hedged = st.session_state.get("hedged_toggle", False)
+if "lookback_horizon" not in st.session_state:
+    st.session_state["lookback_horizon"] = "5Y"
+if "start_date" not in st.session_state or "end_date" not in st.session_state:
+    s_date, e_date = compute_lookback_dates(st.session_state["lookback_horizon"])
+    st.session_state["start_date"] = s_date
+    st.session_state["end_date"] = e_date
 
 st.markdown(
     """
@@ -52,17 +65,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Retrieve Global Session State
-capital = float(st.session_state.get("capital_amount", 100_000.0))
-base_curr = st.session_state.get("selected_currency", "USD")
-active_strat = st.session_state.get("selected_strategy", "max_sharpe")
-bench_choice_default = st.session_state.get("benchmark_ticker", "^GSPC")
-is_hedged = st.session_state.get("hedged_toggle", False)
+# Render Data Freshness & Proxy Backfill Warning Badges
+render_data_freshness_badge()
+render_backfill_warning_badge()
 
 curr_sym = get_currency_symbol(base_curr)
 
 # Control Panel
-b_c1, b_c2, b_c3, b_c4 = st.columns(4)
+b_c1, b_c2, b_c3, b_c4, b_c5 = st.columns(5)
 
 curr_options = SUPPORTED_CURRENCIES + ["LOCAL"]
 base_curr = b_c1.selectbox("Base Currency", curr_options, index=curr_options.index(base_curr) if base_curr in curr_options else 0, key="backtest_curr")
@@ -74,10 +84,20 @@ cur_idx = strat_keys.index(active_strat) if active_strat in strat_keys else 0
 strategy_type_name = b_c2.selectbox("Strategy Model", strat_names, index=cur_idx)
 strategy_type = strat_keys[strat_names.index(strategy_type_name)]
 
-rebal_freq = b_c3.selectbox("Rebalancing Schedule", ["Monthly", "Quarterly", "Annual"], index=0)
+cur_lb = st.session_state.get("lookback_horizon", "5Y")
+cur_lb_idx = LOOKBACK_HORIZONS.index(cur_lb) if cur_lb in LOOKBACK_HORIZONS else 3
+selected_lb = b_c3.selectbox("Historical Horizon", LOOKBACK_HORIZONS, index=cur_lb_idx, key="backtest_horizon")
+if selected_lb != cur_lb:
+    st.session_state["lookback_horizon"] = selected_lb
+    s_date, e_date = compute_lookback_dates(selected_lb)
+    st.session_state["start_date"] = s_date
+    st.session_state["end_date"] = e_date
+    st.rerun()
+
+rebal_freq = b_c4.selectbox("Rebalancing Schedule", ["Monthly", "Quarterly", "Annual"], index=0)
 benchmarks = ["^GSPC", "^KLSE", "^N225", "^NDX", "^RUT"]
 cur_bench_idx = benchmarks.index(bench_choice_default) if bench_choice_default in benchmarks else 0
-bench_choice = b_c4.selectbox("Benchmark", benchmarks, index=cur_bench_idx)
+bench_choice = b_c5.selectbox("Benchmark", benchmarks, index=cur_bench_idx)
 
 # Interactive Slippage & Friction Slider
 friction_bps = st.slider(
@@ -91,9 +111,12 @@ friction_bps = st.slider(
 
 with st.spinner("Executing strategy dispatch and portfolio rebalancing simulation..."):
     prices_df, is_demo = get_cached_universe_prices(
-        start_date="2019-01-01",
-        end_date="2024-12-31",
+        start_date=st.session_state.get("start_date"),
+        end_date=st.session_state.get("end_date"),
         base_currency=base_curr,
+        lookback_horizon=st.session_state.get("lookback_horizon", "5Y"),
+        ttl_seconds=st.session_state.get("cache_ttl_seconds", 14400),
+        force_reload=st.session_state.get("force_reload", False),
     )
 
 registry = load_universe_registry()

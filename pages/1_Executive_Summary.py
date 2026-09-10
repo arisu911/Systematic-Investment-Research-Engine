@@ -29,11 +29,11 @@ from data.aligner import (
     get_fx_adjusted_benchmark,
     calculate_relative_benchmark_metrics,
 )
-from data.loader import get_cached_universe_prices
+from data.loader import get_cached_universe_prices, compute_lookback_dates, LOOKBACK_HORIZONS
 from data.fx_engine import get_currency_symbol, FXEngine, SUPPORTED_CURRENCIES
 from research.strategies import StrategyDispatcher, STRATEGY_REGISTRY
 from research.execution import ExecutionEngine
-from research.utils import inject_metric_css, format_money
+from research.utils import inject_metric_css, format_money, render_data_freshness_badge, render_backfill_warning_badge
 from experiments.backtester import PortfolioBacktester
 
 try:
@@ -52,6 +52,12 @@ active_strategy = st.session_state.get("selected_strategy", "max_sharpe")
 is_hedged = st.session_state.get("hedged_toggle", False)
 benchmark_ticker = st.session_state.get("benchmark_ticker", "^GSPC")
 risk_free_rate = float(st.session_state.get("risk_free_rate", 0.040))
+if "lookback_horizon" not in st.session_state:
+    st.session_state["lookback_horizon"] = "5Y"
+if "start_date" not in st.session_state or "end_date" not in st.session_state:
+    s_date, e_date = compute_lookback_dates(st.session_state["lookback_horizon"])
+    st.session_state["start_date"] = s_date
+    st.session_state["end_date"] = e_date
 
 st.markdown(
     f"""
@@ -75,9 +81,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Render Data Freshness & Proxy Backfill Warning Badges
+render_data_freshness_badge()
+render_backfill_warning_badge()
+
 # Pinned interactive control bar for on-page adjustments
 with st.expander("⚙️ Fine-Tune Allocation & Strategy Controls", expanded=False):
-    ctl1, ctl2, ctl3 = st.columns(3)
+    ctl1, ctl2, ctl3, ctl4 = st.columns(4)
     
     curr_options = SUPPORTED_CURRENCIES + ["LOCAL"]
     new_curr = ctl1.selectbox("Base Currency", curr_options, index=curr_options.index(base_curr) if base_curr in curr_options else 0)
@@ -98,12 +108,25 @@ with st.expander("⚙️ Fine-Tune Allocation & Strategy Controls", expanded=Fal
         st.session_state["selected_strategy"] = new_strat_key
         st.rerun()
 
+    cur_lb = st.session_state.get("lookback_horizon", "5Y")
+    cur_lb_idx = LOOKBACK_HORIZONS.index(cur_lb) if cur_lb in LOOKBACK_HORIZONS else 3
+    new_lb = ctl4.selectbox("Historical Horizon", LOOKBACK_HORIZONS, index=cur_lb_idx, key="exec_horizon")
+    if new_lb != cur_lb:
+        st.session_state["lookback_horizon"] = new_lb
+        s_date, e_date = compute_lookback_dates(new_lb)
+        st.session_state["start_date"] = s_date
+        st.session_state["end_date"] = e_date
+        st.rerun()
+
 # Ingest and convert prices
 with st.spinner("Triangulating multi-currency exchange rates and computing strategy allocation..."):
     prices_df, is_demo = get_cached_universe_prices(
-        start_date=st.session_state.get("start_date", "2020-01-01"),
-        end_date=st.session_state.get("end_date", "2024-12-31"),
+        start_date=st.session_state.get("start_date"),
+        end_date=st.session_state.get("end_date"),
         base_currency=base_curr,
+        lookback_horizon=st.session_state.get("lookback_horizon", "5Y"),
+        ttl_seconds=st.session_state.get("cache_ttl_seconds", 14400),
+        force_reload=st.session_state.get("force_reload", False),
     )
 
 registry = load_universe_registry()

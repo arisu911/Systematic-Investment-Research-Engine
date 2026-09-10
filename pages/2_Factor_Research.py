@@ -22,9 +22,9 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 from data.aligner import load_universe_registry
-from data.loader import get_cached_universe_prices, get_all_universe_tickers
+from data.loader import get_cached_universe_prices, get_all_universe_tickers, compute_lookback_dates, LOOKBACK_HORIZONS
 from research.signals import SignalEngine
-from research.utils import inject_metric_css
+from research.utils import inject_metric_css, render_data_freshness_badge, render_backfill_warning_badge
 
 try:
     st.set_page_config(page_title="Factor Research", page_icon="🌐", layout="wide")
@@ -32,6 +32,14 @@ except Exception:
     pass
 
 inject_metric_css()
+
+# Initialize Session State Defaults
+if "lookback_horizon" not in st.session_state:
+    st.session_state["lookback_horizon"] = "5Y"
+if "start_date" not in st.session_state or "end_date" not in st.session_state:
+    s_date, e_date = compute_lookback_dates(st.session_state["lookback_horizon"])
+    st.session_state["start_date"] = s_date
+    st.session_state["end_date"] = e_date
 
 st.markdown(
     """
@@ -48,14 +56,38 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Render Data Freshness & Proxy Backfill Warning Badges
+render_data_freshness_badge()
+render_backfill_warning_badge()
+
 # Load full 25-instrument universe
 base_curr = st.session_state.get("selected_currency", st.session_state.get("base_currency", "USD"))
 is_hedged = st.session_state.get("hedged_toggle", False)
 
+with st.expander("⚙️ Fine-Tune Historical Horizon & Base Currency", expanded=False):
+    f_c1, f_c2 = st.columns(2)
+    curr_options = ["USD", "MYR", "JPY", "EUR", "GBP", "LOCAL"]
+    new_curr = f_c1.selectbox("Base Currency", curr_options, index=curr_options.index(base_curr) if base_curr in curr_options else 0, key="factor_curr")
+    if new_curr != base_curr:
+        st.session_state["selected_currency"] = new_curr
+        st.rerun()
+    cur_lb = st.session_state.get("lookback_horizon", "5Y")
+    cur_lb_idx = LOOKBACK_HORIZONS.index(cur_lb) if cur_lb in LOOKBACK_HORIZONS else 3
+    new_lb = f_c2.selectbox("Historical Horizon", LOOKBACK_HORIZONS, index=cur_lb_idx, key="factor_horizon")
+    if new_lb != cur_lb:
+        st.session_state["lookback_horizon"] = new_lb
+        s_date, e_date = compute_lookback_dates(new_lb)
+        st.session_state["start_date"] = s_date
+        st.session_state["end_date"] = e_date
+        st.rerun()
+
 prices_df, is_demo = get_cached_universe_prices(
-    start_date=st.session_state.get("start_date", "2020-01-01"),
-    end_date=st.session_state.get("end_date", "2024-12-31"),
+    start_date=st.session_state.get("start_date"),
+    end_date=st.session_state.get("end_date"),
     base_currency=base_curr,
+    lookback_horizon=st.session_state.get("lookback_horizon", "5Y"),
+    ttl_seconds=st.session_state.get("cache_ttl_seconds", 14400),
+    force_reload=st.session_state.get("force_reload", False),
 )
 
 registry = load_universe_registry()

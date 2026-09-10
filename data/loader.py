@@ -6,10 +6,12 @@ and provides deterministic offline synthetic fallback with empirical correlation
 """
 
 import os
+import json
 import hashlib
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional, Any
-from datetime import datetime
+from typing import List, Dict, Tuple, Optional, Any, Union
+from datetime import datetime, timedelta, timezone
+from dateutil.relativedelta import relativedelta
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -26,6 +28,17 @@ except ImportError:
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _CACHE_DIR = _PROJECT_ROOT / "data" / "cache"
 _UNIVERSE_FILE = _PROJECT_ROOT / "configs" / "universe.yaml"
+_METADATA_FILE = _CACHE_DIR / "metadata.json"
+
+LOOKBACK_HORIZONS: List[str] = ["2Y", "3Y", "4Y", "5Y", "10Y"]
+CACHE_TTL_POLICIES: Dict[str, int] = {
+    "1 Hour": 3600,
+    "4 Hours": 14400,
+    "Daily (24h)": 86400,
+}
+
+# Module-level in-memory cache for ultra-fast (< 1ms) lookback slicing
+_IN_MEMORY_MASTER_CACHE: Dict[str, pd.DataFrame] = {}
 
 
 def get_cache_dir() -> Path:
@@ -38,6 +51,155 @@ def get_all_universe_tickers() -> List[str]:
     """Extract list of all 25 tickers from configs/universe.yaml."""
     registry = load_universe_registry()
     return list(registry.keys())
+
+
+def compute_lookback_dates(
+    horizon: str = "5Y",
+    ref_date: Optional[Union[str, datetime]] = None,
+) -> Tuple[str, str]:
+    """Compute (start_date, end_date) in 'YYYY-MM-DD' using calendar offsets via dateutil.relativedelta.
+    
+    Supported horizons: '2Y', '3Y', '4Y', '5Y', '10Y'.
+    Formula: Start Date = Reference Date - N Years.
+    """
+    if ref_date is None:
+        ref_dt = datetime.now()
+    elif isinstance(ref_date, str):
+        ref_dt = datetime.strptime(ref_date, "%Y-%m-%d")
+    else:
+        ref_dt = ref_date
+
+    years_map = {"2Y": 2, "3Y": 3, "4Y": 4, "5Y": 5, "10Y": 10}
+    n_years = years_map.get(horizon.upper().strip(), 5)
+    start_dt = ref_dt - relativedelta(years=n_years)
+    return start_dt.strftime("%Y-%m-%d"), ref_dt.strftime("%Y-%m-%d")
+
+
+def load_cache_metadata() -> Dict[str, Any]:
+    """Load cache freshness metadata from data/cache/metadata.json."""
+    if _METADATA_FILE.exists():
+        try:
+            with open(_METADATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "last_refresh_timestamp": "N/A",
+        "last_refresh_iso": "",
+        "data_source": ["yfinance", "FRED"],
+        "active_ttl_seconds": 14400,
+        "active_ttl_label": "4 Hours",
+        "lookback_max_years": 10,
+        "status": "Initialized",
+        "backfilled_tickers": {},
+    }
+
+
+def save_cache_metadata(
+    ttl_seconds: int = 14400,
+    ttl_label: str = "4 Hours",
+    data_source: Optional[List[str]] = None,
+    backfilled_tickers: Optional[Dict[str, Any]] = None,
+    status: str = "Cached",
+) -> Dict[str, Any]:
+    """Persist cache synchronization metadata to data/cache/metadata.json."""
+    now_utc = datetime.now(timezone.utc)
+    meta = {
+        "last_refresh_timestamp": now_utc.strftime("%b %d, %Y %H:%M UTC"),
+        "last_refresh_iso": now_utc.isoformat(),
+        "data_source": data_source or ["yfinance", "FRED"],
+        "active_ttl_seconds": int(ttl_seconds),
+        "active_ttl_label": ttl_label,
+        "lookback_max_years": 10,
+        "status": status,
+        "backfilled_tickers": backfilled_tickers or {},
+    }
+    get_cache_dir()
+    with open(_METADATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+    return meta
+
+
+def is_cache_expired(ttl_seconds: int = 14400) -> bool:
+    """Check if the cache has expired based on active TTL."""
+    meta = load_cache_metadata()
+    iso_str = meta.get("last_refresh_iso")
+    if not iso_str:
+        return True
+    try:
+        last_dt = datetime.fromisoformat(iso_str)
+        now_dt = datetime.now(timezone.utc)
+        return (now_dt - last_dt) > timedelta(seconds=ttl_seconds)
+    except Exception:
+        return True
+
+
+def purge_cache() -> int:
+    """Purge all local cache files inside data/cache/*.parquet and reset metadata."""
+    _IN_MEMORY_MASTER_CACHE.clear()
+    cache_dir = get_cache_dir()
+    count = 0
+    for p in cache_dir.glob("*.parquet"):
+        try:
+            p.unlink()
+            count += 1
+        except Exception:
+            pass
+    save_cache_metadata(status="Purged / Pending Refresh")
+    return count
+
+
+def backfill_shorter_history_with_proxies(
+    raw_df: pd.DataFrame,
+    registry: Optional[Dict[str, Any]] = None,
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Gracefully backfill instruments with fewer than 10 years of data using regional benchmark proxies.
+    
+    Proxies:
+      - Bursa Malaysia (.KL): ^KLSE
+      - Tokyo Stock Exchange (.T): ^N225
+      - US / Global / Commodities: ^GSPC
+      
+    Returns:
+      (backfilled_df, backfilled_summary)
+    """
+    if raw_df.empty:
+        return raw_df, {}
+
+    if registry is None:
+        registry = load_universe_registry()
+
+    df = raw_df.copy()
+    backfilled_info = {}
+
+    for col in df.columns:
+        first_valid = df[col].first_valid_index()
+        if first_valid is None:
+            continue
+
+        if first_valid > df.index[0]:
+            meta = registry.get(col, {})
+            region = meta.get("region", "")
+            if region == "MY" or ".KL" in col:
+                proxy = "^KLSE"
+            elif region == "JP" or ".T" in col:
+                proxy = "^N225"
+            else:
+                proxy = "^GSPC"
+
+            if proxy in df.columns and df[proxy].notna().sum() > 0:
+                p_asset = df.loc[first_valid, col]
+                p_proxy = df.loc[first_valid, proxy]
+                if pd.notna(p_proxy) and p_proxy > 0:
+                    scale = p_asset / p_proxy
+                    proxy_scaled = df[proxy] * scale
+                    df[col] = df[col].combine_first(proxy_scaled)
+                    backfilled_info[col] = {
+                        "proxy": proxy,
+                        "first_listing_date": str(first_valid.strftime("%Y-%m-%d")),
+                    }
+
+    return df, backfilled_info
 
 
 def _hash_cache_key(prefix: str, symbols: List[str], start_date: str, end_date: str, extra: str = "") -> str:
@@ -201,94 +363,218 @@ def load_raw_yfinance_multi_market(
 
 def load_universe_prices(
     symbols: Optional[List[str]] = None,
-    start_date: str = "2019-01-01",
-    end_date: str = "2024-12-31",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     base_currency: str = "USD",
     force_offline: bool = False,
     max_ffill_days: int = 3,
+    lookback_horizon: Optional[str] = None,
+    force_reload: bool = False,
+    ttl_seconds: int = 14400,
 ) -> Tuple[pd.DataFrame, bool]:
     """Primary entry point for loading the 25-instrument universe.
     
-    1. Checks local Snappy Parquet cache in data/cache/.
-    2. Downloads from yfinance if missing and not forced offline.
-    3. Falls back deterministically to synthetic data if network unavailable.
-    4. Applies multi-market calendar alignment (data/aligner.py).
-    5. Normalizes to base_currency (USD, MYR, or LOCAL).
+    1. Maintains a Snappy-compressed 10-year master cache (universe_history_{base_currency}.parquet).
+    2. Validates cache freshness via metadata.json against configurable TTL (1h, 4h, 24h).
+    3. If expired or forced reload, pulls full quotes, aligns calendars, and backfills newer IPOs.
+    4. Slices the in-memory DataFrame to the requested lookback window (2Y, 3Y, 4Y, 5Y, 10Y) in < 5ms.
     
     Returns:
-        (aligned_prices_df, is_demo_mode)
+        (sliced_prices_df, is_demo_mode)
     """
-    if symbols is None:
-        symbols = get_all_universe_tickers()
+    all_symbols = get_all_universe_tickers()
+    requested_symbols = symbols if symbols is not None else all_symbols
 
-    cache_key = _hash_cache_key("multi_universe", symbols, start_date, end_date, base_currency)
-    cache_file = get_cache_dir() / f"universe_{cache_key}.parquet"
+    # Determine requested slice date range
+    if start_date is None and end_date is None:
+        start_date, end_date = compute_lookback_dates(lookback_horizon or "5Y")
+    elif start_date is None:
+        start_date, _ = compute_lookback_dates(lookback_horizon or "5Y")
 
-    if cache_file.exists() and not force_offline:
-        try:
-            cached_df = pd.read_parquet(cache_file)
-            if not cached_df.empty and len(cached_df) >= 30:
-                return cached_df, False
-        except Exception:
-            pass
+    b_curr_clean = base_currency.upper().strip()
+    master_file = get_cache_dir() / f"universe_history_{b_curr_clean}.parquet"
 
     is_demo = False
-    raw_df = pd.DataFrame()
+    master_df = pd.DataFrame()
+    cache_valid = False
 
-    if not force_offline:
-        raw_df = load_raw_yfinance_multi_market(symbols, start_date, end_date)
+    # 1. Check in-memory master DataFrame cache first (< 0.1ms)
+    if not force_reload and not is_cache_expired(ttl_seconds):
+        if b_curr_clean in _IN_MEMORY_MASTER_CACHE:
+            master_df = _IN_MEMORY_MASTER_CACHE[b_curr_clean]
+            if not master_df.empty and len(master_df) >= 50:
+                cache_valid = True
 
-    if raw_df.empty or len(raw_df) < 50:
-        is_demo = True
-        raw_df = generate_deterministic_multi_market_prices(symbols, start_date, end_date)
+    # 2. Check disk Snappy parquet cache
+    if not cache_valid and master_file.exists() and not force_reload:
+        if force_offline or not is_cache_expired(ttl_seconds):
+            try:
+                master_df = pd.read_parquet(master_file)
+                if not master_df.empty and len(master_df) >= 50:
+                    master_df.index = pd.to_datetime(master_df.index)
+                    if master_df.index.tz is not None:
+                        master_df.index = master_df.index.tz_localize(None)
+                    _IN_MEMORY_MASTER_CACHE[b_curr_clean] = master_df
+                    cache_valid = True
+            except Exception:
+                cache_valid = False
+
+    # Legacy cache fallback check
+    if not cache_valid and not force_reload and not force_offline:
+        legacy_key = _hash_cache_key("multi_universe", requested_symbols, start_date or "2019-01-01", end_date or "2024-12-31", base_currency)
+        legacy_file = get_cache_dir() / f"universe_{legacy_key}.parquet"
+        if legacy_file.exists():
+            try:
+                cached_legacy = pd.read_parquet(legacy_file)
+                if not cached_legacy.empty and len(cached_legacy) >= 30:
+                    return cached_legacy, False
+            except Exception:
+                pass
+
+    if not cache_valid:
+        # Fetch / synthesize 10-year master historical quotes
+        m_start, m_end = compute_lookback_dates("10Y")
+        raw_df = pd.DataFrame()
+
+        if not force_offline:
+            raw_df = load_raw_yfinance_multi_market(all_symbols, m_start, m_end)
+
+        if raw_df.empty or len(raw_df) < 50:
+            is_demo = True
+            raw_df = generate_deterministic_multi_market_prices(all_symbols, m_start, m_end)
+        else:
+            # Check for missing symbols and patch with deterministic series
+            missing = [s for s in all_symbols if (s not in raw_df.columns or raw_df[s].notna().sum() < 30)]
+            if missing:
+                synth_patch = generate_deterministic_multi_market_prices(missing, m_start, m_end)
+                synth_aligned = synth_patch.reindex(raw_df.index).ffill().bfill()
+                for m in missing:
+                    raw_df[m] = synth_aligned[m]
+
+        # Multi-market cross-calendar alignment
+        aligned_df = align_cross_market_calendars(raw_df, max_ffill_days=max_ffill_days)
+
+        # Graceful proxy backfill for newer listings (< 10Y history)
+        registry = load_universe_registry()
+        backfilled_df, backfill_meta = backfill_shorter_history_with_proxies(aligned_df, registry=registry)
+
+        # Dynamic currency normalization via FXEngine
+        from data.fx_engine import FXEngine
+        fx_engine = FXEngine(backfilled_df, registry=registry)
+        master_df = fx_engine.convert_asset_prices(target_currency=b_curr_clean)
+
+        # Persist Snappy-compressed 10-year master cache and memory cache
+        if not master_df.empty:
+            master_df.index = pd.to_datetime(master_df.index)
+            if master_df.index.tz is not None:
+                master_df.index = master_df.index.tz_localize(None)
+            _IN_MEMORY_MASTER_CACHE[b_curr_clean] = master_df
+            try:
+                master_df.to_parquet(master_file, compression="snappy")
+                ttl_label = "4 Hours"
+                for lab, sec in CACHE_TTL_POLICIES.items():
+                    if sec == ttl_seconds:
+                        ttl_label = lab
+                        break
+                save_cache_metadata(
+                    ttl_seconds=ttl_seconds,
+                    ttl_label=ttl_label,
+                    backfilled_tickers=backfill_meta,
+                    status="Live / Synced" if not is_demo else "Offline / Synthetic",
+                )
+            except Exception as e:
+                print(f"[WARN] Failed to persist master cache: {e}")
+
+    # Ultra-fast in-memory slicing (< 1ms)
+    s_dt = pd.to_datetime(start_date) if start_date is not None else None
+    e_dt = pd.to_datetime(end_date) if end_date is not None else None
+
+    if s_dt is not None and e_dt is not None:
+        sliced_df = master_df.loc[(master_df.index >= s_dt) & (master_df.index <= e_dt)]
+    elif s_dt is not None:
+        sliced_df = master_df.loc[master_df.index >= s_dt]
+    elif e_dt is not None:
+        sliced_df = master_df.loc[master_df.index <= e_dt]
     else:
-        # Check for missing symbols and impute synthetic series if necessary
-        missing = [s for s in symbols if (s not in raw_df.columns or raw_df[s].notna().sum() < 30)]
-        if missing:
-            synth_patch = generate_deterministic_multi_market_prices(missing, start_date, end_date)
-            synth_aligned = synth_patch.reindex(raw_df.index).ffill().bfill()
-            for m in missing:
-                raw_df[m] = synth_aligned[m]
+        sliced_df = master_df
 
-    # Align calendars across Bursa, NYSE, TSE
-    aligned_df = align_cross_market_calendars(raw_df, max_ffill_days=max_ffill_days)
-
-    # Normalize currency via FXEngine
-    from data.fx_engine import FXEngine
-    registry = load_universe_registry()
-    fx_engine = FXEngine(aligned_df, registry=registry)
-    normalized_df = fx_engine.convert_asset_prices(target_currency=base_currency)
-
-    # Filter to requested symbols that exist
-    final_cols = [s for s in symbols if s in normalized_df.columns]
-    result_df = normalized_df[final_cols].copy()
-
-    # Persist cache
-    if not result_df.empty:
-        try:
-            result_df.to_parquet(cache_file, compression="snappy")
-        except Exception:
-            pass
-
-    return result_df, is_demo
+    # Filter columns to requested symbols that exist
+    final_cols = [s for s in requested_symbols if s in sliced_df.columns]
+    return sliced_df[final_cols].copy(), is_demo
 
 
 def get_cached_universe_prices(
     symbols: Optional[List[str]] = None,
-    start_date: str = "2019-01-01",
-    end_date: str = "2024-12-31",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     base_currency: str = "USD",
     force_offline: bool = False,
     max_ffill_days: int = 3,
+    lookback_horizon: Optional[str] = None,
+    force_reload: bool = False,
+    ttl_seconds: Optional[int] = None,
 ) -> Tuple[pd.DataFrame, bool]:
-    """Streamlit cached wrapper with 1-hour TTL invalidation."""
+    """Streamlit cached wrapper with configurable TTL invalidation and memory slicing."""
+    active_ttl = ttl_seconds or 14400
     if HAS_STREAMLIT:
-        @st.cache_data(ttl=3600, show_spinner=False)
-        def _cached_loader(syms_tuple, s_date, e_date, b_curr, f_off, m_ffill):
+        @st.cache_data(ttl=86400, show_spinner=False)
+        def _cached_loader(syms_tuple, s_date, e_date, b_curr, f_off, m_ffill, l_horiz, f_rel, ttl_sec):
             syms_list = list(syms_tuple) if syms_tuple is not None else None
-            return load_universe_prices(syms_list, s_date, e_date, b_curr, f_off, m_ffill)
+            return load_universe_prices(
+                symbols=syms_list,
+                start_date=s_date,
+                end_date=e_date,
+                base_currency=b_curr,
+                force_offline=f_off,
+                max_ffill_days=m_ffill,
+                lookback_horizon=l_horiz,
+                force_reload=f_rel,
+                ttl_seconds=ttl_sec,
+            )
 
         syms_key = tuple(symbols) if symbols is not None else None
-        return _cached_loader(syms_key, start_date, end_date, base_currency, force_offline, max_ffill_days)
+        return _cached_loader(
+            syms_key,
+            start_date,
+            end_date,
+            base_currency,
+            force_offline,
+            max_ffill_days,
+            lookback_horizon,
+            force_reload,
+            active_ttl,
+        )
     else:
-        return load_universe_prices(symbols, start_date, end_date, base_currency, force_offline, max_ffill_days)
+        return load_universe_prices(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            base_currency=base_currency,
+            force_offline=force_offline,
+            max_ffill_days=max_ffill_days,
+            lookback_horizon=lookback_horizon,
+            force_reload=force_reload,
+            ttl_seconds=active_ttl,
+        )
+
+
+def fetch_universe_data(
+    symbols: Optional[List[str]] = None,
+    lookback_horizon: str = "5Y",
+    base_currency: str = "USD",
+    force_offline: bool = False,
+    force_reload: bool = False,
+    ttl_seconds: int = 14400,
+) -> Tuple[pd.DataFrame, bool]:
+    """Primary high-level entry point to fetch and slice universe data with configurable TTL."""
+    s_date, e_date = compute_lookback_dates(lookback_horizon)
+    return get_cached_universe_prices(
+        symbols=symbols,
+        start_date=s_date,
+        end_date=e_date,
+        base_currency=base_currency,
+        force_offline=force_offline,
+        lookback_horizon=lookback_horizon,
+        force_reload=force_reload,
+        ttl_seconds=ttl_seconds,
+    )

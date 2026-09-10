@@ -20,12 +20,23 @@ import plotly.graph_objects as go
 import yaml
 
 from data.aligner import load_universe_registry, get_tradable_tickers
-from data.loader import get_cached_universe_prices, get_all_universe_tickers
+from data.loader import (
+    get_cached_universe_prices,
+    get_all_universe_tickers,
+    fetch_universe_data,
+    purge_cache,
+    compute_lookback_dates,
+    load_cache_metadata,
+    LOOKBACK_HORIZONS,
+    CACHE_TTL_POLICIES,
+)
 from data.fx_engine import SUPPORTED_CURRENCIES, get_currency_symbol, FXEngine
-from research.strategies import STRATEGY_REGISTRY
-from research.utils import inject_metric_css, format_money
-
-# Global Terminal Page Configuration
+from research.utils import (
+    inject_metric_css,
+    format_money,
+    render_data_freshness_badge,
+    render_backfill_warning_badge,
+)
 try:
     st.set_page_config(
         page_title="Multi-Market Universe Engine",
@@ -52,10 +63,19 @@ if "risk_free_rate" not in st.session_state:
     st.session_state["risk_free_rate"] = 0.040
 if "benchmark_ticker" not in st.session_state:
     st.session_state["benchmark_ticker"] = "^GSPC"
-if "start_date" not in st.session_state:
-    st.session_state["start_date"] = "2020-01-01"
-if "end_date" not in st.session_state:
-    st.session_state["end_date"] = "2024-12-31"
+if "lookback_horizon" not in st.session_state:
+    st.session_state["lookback_horizon"] = "5Y"
+if "cache_ttl_label" not in st.session_state:
+    st.session_state["cache_ttl_label"] = "4 Hours"
+if "cache_ttl_seconds" not in st.session_state:
+    st.session_state["cache_ttl_seconds"] = 14400
+if "last_sync_time" not in st.session_state:
+    _meta = load_cache_metadata()
+    st.session_state["last_sync_time"] = _meta.get("last_refresh_timestamp", "N/A")
+if "start_date" not in st.session_state or "end_date" not in st.session_state:
+    s_date, e_date = compute_lookback_dates(st.session_state["lookback_horizon"])
+    st.session_state["start_date"] = s_date
+    st.session_state["end_date"] = e_date
 
 
 def render_sidebar_controls():
@@ -135,14 +155,105 @@ def render_sidebar_controls():
     st.session_state["benchmark_ticker"] = st.sidebar.selectbox("Global Benchmark", benchmarks, index=cur_bench_idx)
 
     st.sidebar.markdown("---")
-    if st.sidebar.button("🧹 Clear Parquet Cache", use_container_width=True):
-        st.cache_data.clear()
-        st.sidebar.success("Local Parquet cache cleared.")
+    st.sidebar.markdown("### ⏱️ Data Freshness & Lookback")
+    lookback_opts = ["2Y", "3Y", "4Y", "5Y", "10Y"]
+    cur_lb = st.session_state.get("lookback_horizon", "5Y")
+    sb_lookback = st.sidebar.selectbox(
+        "Historical Horizon",
+        lookback_opts,
+        index=lookback_opts.index(cur_lb) if cur_lb in lookback_opts else 3,
+        key="sb_lookback_select",
+    )
+    if sb_lookback != cur_lb:
+        st.session_state["lookback_horizon"] = sb_lookback
+        s_date, e_date = compute_lookback_dates(sb_lookback)
+        st.session_state["start_date"] = s_date
+        st.session_state["end_date"] = e_date
+        st.rerun()
+
+    ttl_opts = {"1 Hour": 3600, "4 Hours": 14400, "Daily (24h)": 86400}
+    cur_ttl = st.session_state.get("cache_ttl_label", "4 Hours")
+    sb_ttl = st.sidebar.selectbox(
+        "Cache Policy",
+        list(ttl_opts.keys()),
+        index=list(ttl_opts.keys()).index(cur_ttl) if cur_ttl in ttl_opts else 1,
+        key="sb_ttl_select",
+    )
+    st.session_state["cache_ttl_label"] = sb_ttl
+    st.session_state["cache_ttl_seconds"] = ttl_opts[sb_ttl]
+
+    if st.sidebar.button("↻ Hard Refresh Data", use_container_width=True, help="Purge all local cache files and re-download fresh market data."):
+        with st.spinner("Purging cache and fetching fresh market data..."):
+            purge_cache()
+            st.cache_data.clear()
+            st.session_state["force_reload"] = True
+            st.rerun()
 
 
 def render_overview():
     """Render Terminal Status, Universe Registry, and Live FX Matrix."""
     render_sidebar_controls()
+
+    # --- Data Refresh & Lookback Control Bar ---
+    with st.container():
+        c1, c2, c3, c4, c5 = st.columns([1.2, 1.2, 1.2, 1.0, 1.4])
+        
+        with c1:
+            lookback_options = ["2Y", "3Y", "4Y", "5Y", "10Y"]
+            current_lookback = st.session_state.get("lookback_horizon", "5Y")
+            cur_lb_idx = lookback_options.index(current_lookback) if current_lookback in lookback_options else 3
+            selected_lookback = c1.selectbox(
+                "Historical Horizon", 
+                lookback_options, 
+                index=cur_lb_idx,
+                key="lookback_select"
+            )
+            if selected_lookback != current_lookback:
+                st.session_state["lookback_horizon"] = selected_lookback
+                s_date, e_date = compute_lookback_dates(selected_lookback)
+                st.session_state["start_date"] = s_date
+                st.session_state["end_date"] = e_date
+                st.rerun()
+
+        with c2:
+            ttl_options = {"1 Hour": 3600, "4 Hours": 14400, "Daily (24h)": 86400}
+            current_ttl_label = st.session_state.get("cache_ttl_label", "4 Hours")
+            cur_ttl_idx = list(ttl_options.keys()).index(current_ttl_label) if current_ttl_label in ttl_options else 1
+            selected_ttl_label = c2.selectbox(
+                "Cache Policy", 
+                list(ttl_options.keys()), 
+                index=cur_ttl_idx,
+                key="ttl_select"
+            )
+            st.session_state["cache_ttl_label"] = selected_ttl_label
+            st.session_state["cache_ttl_seconds"] = ttl_options[selected_ttl_label]
+
+        with c3:
+            c3.write("") # Spacer
+            c3.write("")
+            if c3.button("↻ Hard Refresh", type="primary", use_container_width=True, help="Purge all local cache files and re-download fresh market data."):
+                with st.spinner("Purging cache and fetching fresh market data..."):
+                    purge_cache()
+                    st.cache_data.clear()
+                    st.session_state["force_reload"] = True
+                    st.rerun()
+
+        with c4:
+            c4.write("")
+            c4.write("")
+            meta = load_cache_metadata()
+            last_sync = meta.get("last_refresh_timestamp", st.session_state.get("last_sync_time", "N/A"))
+            st.session_state["last_sync_time"] = last_sync
+            c4.caption(f"Last Sync:\n**{last_sync}**")
+
+        with c5:
+            active_curr = st.session_state.get("selected_currency", "USD")
+            active_cap = st.session_state.get("capital_amount", 100000.0)
+            c5.metric(label=f"Active Portfolio ({active_curr})", value=f"{active_cap:,.0f}")
+
+    meta = load_cache_metadata()
+    render_data_freshness_badge(meta)
+    render_backfill_warning_badge(meta)
 
     base_curr = st.session_state["selected_currency"]
     capital = st.session_state["capital_amount"]
@@ -158,6 +269,8 @@ def render_overview():
         start_date=st.session_state["start_date"],
         end_date=st.session_state["end_date"],
         base_currency=base_curr,
+        lookback_horizon=st.session_state["lookback_horizon"],
+        ttl_seconds=st.session_state.get("cache_ttl_seconds", 14400),
     )
 
     # Top Status Banner
