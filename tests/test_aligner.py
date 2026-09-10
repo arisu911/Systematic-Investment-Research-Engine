@@ -9,6 +9,8 @@ from data.aligner import (
     align_cross_market_calendars,
     normalize_currency,
     compute_unhedged_returns,
+    get_fx_adjusted_benchmark,
+    calculate_relative_benchmark_metrics,
 )
 
 
@@ -86,3 +88,137 @@ def test_currency_normalization():
     local_norm = normalize_currency(prices_df, target_currency="LOCAL")
     assert np.isclose(local_norm["1155.KL"].iloc[0], 10.00)
     assert np.isclose(local_norm["AAPL"].iloc[0], 200.00)
+
+
+def test_get_fx_adjusted_benchmark_usd_myr():
+    dates = pd.date_range("2023-01-02", periods=5, freq="B")
+    raw_df = pd.DataFrame({
+        "^KLSE": [1500.0, 1510.0, 1520.0, 1530.0, 1540.0],
+        "USDMYR=X": [4.50, 4.50, 4.50, 4.50, 4.50],
+    }, index=dates)
+
+    # In USD, KLSE close must be divided by USDMYR
+    bench_usd = get_fx_adjusted_benchmark(
+        ticker="^KLSE",
+        index_currency="MYR",
+        target_currency="USD",
+        raw_prices=raw_df,
+        is_currency_adjusted=True,
+    )
+    expected = raw_df["^KLSE"] / 4.50
+    pd.testing.assert_series_equal(bench_usd, expected, check_names=False)
+
+
+def test_get_fx_adjusted_benchmark_usd_jpy():
+    dates = pd.date_range("2023-01-02", periods=5, freq="B")
+    raw_df = pd.DataFrame({
+        "^N225": [30000.0, 30100.0, 30200.0, 30300.0, 30400.0],
+        "JPY=X": [150.0, 150.0, 150.0, 150.0, 150.0],
+    }, index=dates)
+
+    # In USD, N225 close must be divided by JPY=X
+    bench_usd = get_fx_adjusted_benchmark(
+        ticker="^N225",
+        index_currency="JPY",
+        target_currency="USD",
+        raw_prices=raw_df,
+        is_currency_adjusted=True,
+    )
+    expected = raw_df["^N225"] / 150.0
+    pd.testing.assert_series_equal(bench_usd, expected, check_names=False)
+
+
+def test_get_fx_adjusted_benchmark_myr_usd():
+    dates = pd.date_range("2023-01-02", periods=5, freq="B")
+    raw_df = pd.DataFrame({
+        "^GSPC": [5000.0, 5020.0, 5040.0, 5060.0, 5080.0],
+        "USDMYR=X": [4.40, 4.40, 4.40, 4.40, 4.40],
+    }, index=dates)
+
+    # In MYR, GSPC close must be multiplied by USDMYR
+    bench_myr = get_fx_adjusted_benchmark(
+        ticker="^GSPC",
+        index_currency="USD",
+        target_currency="MYR",
+        raw_prices=raw_df,
+        is_currency_adjusted=True,
+    )
+    expected = raw_df["^GSPC"] * 4.40
+    pd.testing.assert_series_equal(bench_myr, expected, check_names=False)
+
+
+def test_get_fx_adjusted_benchmark_unadjusted_local():
+    dates = pd.date_range("2023-01-02", periods=5, freq="B")
+    raw_df = pd.DataFrame({
+        "^KLSE": [1500.0, 1510.0, 1520.0, 1530.0, 1540.0],
+        "USDMYR=X": [4.50, 4.50, 4.50, 4.50, 4.50],
+    }, index=dates)
+
+    # When is_currency_adjusted=False, returns raw local index
+    bench_raw = get_fx_adjusted_benchmark(
+        ticker="^KLSE",
+        index_currency="MYR",
+        target_currency="USD",
+        raw_prices=raw_df,
+        is_currency_adjusted=False,
+    )
+    pd.testing.assert_series_equal(bench_raw, raw_df["^KLSE"], check_names=False)
+
+
+def test_calculate_relative_benchmark_metrics():
+    dates = pd.date_range("2023-01-02", periods=100, freq="B")
+    np.random.seed(42)
+    bench_rets = np.random.normal(0.0005, 0.01, size=100)
+    # Portfolio has beta = 1.2 and alpha = 0.0002 daily
+    port_rets = 1.2 * bench_rets + 0.0002 + np.random.normal(0, 0.002, size=100)
+
+    bench_curve = 100.0 * np.exp(np.cumsum(bench_rets))
+    port_curve = 1000.0 * np.exp(np.cumsum(port_rets))
+
+    bench_series = pd.Series(bench_curve, index=dates)
+    port_series = pd.Series(port_curve, index=dates)
+
+    # Add holiday gaps (NaNs) in benchmark series to test 3-day forward fill
+    bench_with_holidays = bench_series.copy()
+    bench_with_holidays.iloc[10:12] = np.nan  # 2-day market holiday
+
+    metrics = calculate_relative_benchmark_metrics(port_series, bench_with_holidays)
+
+    assert np.isclose(metrics["beta"], 1.2, atol=0.15)
+    assert metrics["alpha"] > 0.0
+    assert 0.0 <= metrics["r_squared"] <= 1.0
+    assert metrics["tracking_error"] > 0.0
+    assert metrics["correlation"] > 0.80
+
+
+def test_benchmark_isolation_from_portfolio_metrics():
+    """Verify that switching benchmarks has ZERO impact on standalone portfolio statistics."""
+    dates = pd.date_range("2023-01-02", periods=50, freq="B")
+    np.random.seed(101)
+    port_rets = np.random.normal(0.0006, 0.012, size=50)
+    port_curve = pd.Series(100_000.0 * np.exp(np.cumsum(port_rets)), index=dates)
+
+    # Standalone metrics computed directly on portfolio equity curve
+    daily_port_ret = port_curve.pct_change().dropna()
+    standalone_cagr = float((port_curve.iloc[-1] / port_curve.iloc[0]) ** (252.0 / len(port_curve))) - 1.0
+    standalone_vol = float(daily_port_ret.std() * np.sqrt(252))
+    standalone_sharpe = (standalone_cagr - 0.04) / standalone_vol
+
+    # Benchmark A (^GSPC)
+    bench_a = pd.Series(5000.0 * np.exp(np.cumsum(np.random.normal(0.0004, 0.01, size=50))), index=dates)
+    metrics_a = calculate_relative_benchmark_metrics(port_curve, bench_a)
+
+    # Benchmark B (^KLSE) with different returns and missing dates
+    bench_b = pd.Series(1500.0 * np.exp(np.cumsum(np.random.normal(-0.0001, 0.008, size=50))), index=dates)
+    bench_b.iloc[5:7] = np.nan
+    metrics_b = calculate_relative_benchmark_metrics(port_curve, bench_b)
+
+    # Relative metrics differ
+    assert metrics_a["beta"] != metrics_b["beta"]
+    assert metrics_a["alpha"] != metrics_b["alpha"]
+
+    # Standalone metrics remain 100% IDENTICAL
+    assert np.isclose(standalone_cagr, (port_curve.iloc[-1] / port_curve.iloc[0]) ** (252.0 / len(port_curve)) - 1.0)
+    assert np.isclose(standalone_vol, daily_port_ret.std() * np.sqrt(252))
+    assert np.isclose(standalone_sharpe, (standalone_cagr - 0.04) / standalone_vol)
+

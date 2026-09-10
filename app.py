@@ -130,7 +130,7 @@ def render_sidebar_controls():
     st.session_state["hedged_toggle"] = is_hedged
 
     # Global Benchmark & Risk-Free Rate
-    benchmarks = ["^GSPC", "^KLSE", "^N225", "^NDX", "^RUT"]
+    benchmarks = ["^GSPC", "^KLSE", "^N225", "^NDX", "^RUT", "^TOPX"]
     cur_bench_idx = benchmarks.index(st.session_state["benchmark_ticker"]) if st.session_state["benchmark_ticker"] in benchmarks else 0
     st.session_state["benchmark_ticker"] = st.sidebar.selectbox("Global Benchmark", benchmarks, index=cur_bench_idx)
 

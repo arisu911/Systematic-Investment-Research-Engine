@@ -243,7 +243,7 @@ def load_universe_prices(
         raw_df = generate_deterministic_multi_market_prices(symbols, start_date, end_date)
     else:
         # Check for missing symbols and impute synthetic series if necessary
-        missing = [s for s in symbols if s not in raw_df.columns]
+        missing = [s for s in symbols if (s not in raw_df.columns or raw_df[s].notna().sum() < 30)]
         if missing:
             synth_patch = generate_deterministic_multi_market_prices(missing, start_date, end_date)
             synth_aligned = synth_patch.reindex(raw_df.index).ffill().bfill()

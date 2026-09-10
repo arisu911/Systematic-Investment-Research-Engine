@@ -23,7 +23,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 
-from data.aligner import load_universe_registry, get_tradable_tickers
+from data.aligner import (
+    load_universe_registry,
+    get_tradable_tickers,
+    get_fx_adjusted_benchmark,
+    calculate_relative_benchmark_metrics,
+)
 from data.loader import get_cached_universe_prices
 from data.fx_engine import get_currency_symbol, FXEngine, SUPPORTED_CURRENCIES
 from research.strategies import StrategyDispatcher, STRATEGY_REGISTRY
@@ -72,7 +77,7 @@ st.markdown(
 
 # Pinned interactive control bar for on-page adjustments
 with st.expander("⚙️ Fine-Tune Allocation & Strategy Controls", expanded=False):
-    ctl1, ctl2, ctl3, ctl4 = st.columns(4)
+    ctl1, ctl2, ctl3 = st.columns(3)
     
     curr_options = SUPPORTED_CURRENCIES + ["LOCAL"]
     new_curr = ctl1.selectbox("Base Currency", curr_options, index=curr_options.index(base_curr) if base_curr in curr_options else 0)
@@ -92,9 +97,6 @@ with st.expander("⚙️ Fine-Tune Allocation & Strategy Controls", expanded=Fal
     if new_strat_key != active_strategy:
         st.session_state["selected_strategy"] = new_strat_key
         st.rerun()
-
-    new_bench = ctl4.selectbox("Benchmark", ["^GSPC", "^KLSE", "^N225", "^NDX", "^RUT"], index=0)
-    st.session_state["benchmark_ticker"] = new_bench
 
 # Ingest and convert prices
 with st.spinner("Triangulating multi-currency exchange rates and computing strategy allocation..."):
@@ -135,17 +137,26 @@ weights = strat_result["weights"]
 assets = strat_result["assets"]
 strategy_title = strat_result.get("strategy_name", active_strategy)
 
-# Run Portfolio Backtester to generate tearsheet curves
-bench_series = prices_df[benchmark_ticker] if benchmark_ticker in prices_df.columns else prices_df.iloc[:, 0]
+# Run Portfolio Backtester strictly on portfolio assets (Decoupled from benchmark)
 backtester = PortfolioBacktester(
     prices_df=prices_df[assets],
-    benchmark_prices=bench_series,
     annual_trading_days=252,
     initial_capital=capital,
 )
 equity_df, summary = backtester.run_rebalancing_backtest(weights=weights, frequency="Monthly")
 
-# Balanced 2x3 Grid of Executive KPI Metric Cards
+# Persist standalone portfolio metrics in session state
+st.session_state["portfolio_equity_curve"] = equity_df["NAV"]
+st.session_state["portfolio_cagr"] = summary["cagr"]
+st.session_state["portfolio_sharpe"] = summary["sharpe_ratio"]
+st.session_state["portfolio_vol"] = summary["annualized_volatility"]
+st.session_state["portfolio_max_dd"] = summary["max_drawdown"]
+st.session_state["portfolio_sortino"] = summary["sortino_ratio"]
+st.session_state["portfolio_calmar"] = summary["calmar_ratio"]
+st.session_state["portfolio_total_return"] = summary["total_return"]
+st.session_state["portfolio_ending_nav"] = summary["ending_nav"]
+
+# Balanced 2x3 Grid of Executive KPI Metric Cards (Strictly Standalone Portfolio Statistics)
 st.markdown("#### 📊 Nominal Performance Scorecard")
 
 ending_nav = summary["ending_nav"]
@@ -161,7 +172,7 @@ row1_col1.metric(
 row1_col2.metric(
     "Compound Annual Growth (CAGR)",
     f"{summary['cagr']:.2%}",
-    f"vs {summary['benchmark_cagr']:.2%} Benchmark",
+    f"Gross: {summary['gross_cagr']:.2%}",
 )
 row1_col3.metric(
     "Annualized Volatility",
@@ -193,39 +204,108 @@ st.markdown("---")
 c_left, c_right = st.columns([6, 4])
 
 with c_left:
-    st.markdown(f"#### 📈 Growth of {format_money(capital, base_curr)} Portfolio vs {benchmark_ticker}")
+    st.markdown(f"#### 📈 Strategy Performance vs. Global Benchmark")
 
-    fig_equity = go.Figure()
-    fig_equity.add_trace(
-        go.Scatter(
-            x=equity_df.index,
-            y=equity_df["NAV"],
-            name=f"Portfolio ({strategy_title})",
-            line=dict(color="#00c805", width=2.5),
-            hovertemplate=f"{curr_sym}%{{y:,.2f}}<extra></extra>",
+    # 1. Retrieve cached strategy equity curve from session state (Independent)
+    port_equity = st.session_state["portfolio_equity_curve"]  # Standalone Series
+    port_cagr = st.session_state["portfolio_cagr"]
+    port_sharpe = st.session_state["portfolio_sharpe"]
+
+    # 2. Benchmark selector (Isolated dropdown)
+    benchmarks = {
+        "S&P 500 (^GSPC)": {"ticker": "^GSPC", "currency": "USD"},
+        "Nasdaq-100 (^NDX)": {"ticker": "^NDX", "currency": "USD"},
+        "Russell 2000 (^RUT)": {"ticker": "^RUT", "currency": "USD"},
+        "FTSE Bursa KLCI (^KLSE)": {"ticker": "^KLSE", "currency": "MYR"},
+        "Nikkei 225 (^N225)": {"ticker": "^N225", "currency": "JPY"},
+        "TOPIX (^TOPX)": {"ticker": "^TOPX", "currency": "JPY"},
+    }
+
+    b_col1, b_col2 = st.columns([3, 2])
+    with b_col1:
+        bench_keys = list(benchmarks.keys())
+        default_idx = 0
+        if benchmark_ticker:
+            for idx, k in enumerate(bench_keys):
+                if benchmarks[k]["ticker"] == benchmark_ticker:
+                    default_idx = idx
+                    break
+        selected_bench_label = st.selectbox(
+            "Comparison Benchmark",
+            bench_keys,
+            index=default_idx,
+            key="exec_bench_choice",
         )
-    )
-    fig_equity.add_trace(
-        go.Scatter(
-            x=equity_df.index,
-            y=equity_df["Benchmark_NAV"],
-            name=f"Benchmark ({benchmark_ticker})",
-            line=dict(color="#64748b", width=1.5, dash="dot"),
-            hovertemplate=f"{curr_sym}%{{y:,.2f}}<extra></extra>",
+        bench_info = benchmarks[selected_bench_label]
+        st.session_state["benchmark_ticker"] = bench_info["ticker"]
+
+    with b_col2:
+        is_currency_adjusted = st.toggle(
+            "Currency Adjusted Benchmark",
+            value=True,
+            help=f"Converts benchmark close prices into active reporting currency ({base_curr}). When disabled, displays raw native local index returns.",
+            key="exec_bench_fx_toggle",
         )
+
+    # 3. Fast FX-adjusted benchmark curve builder (< 0.05s)
+    bench_curve = get_fx_adjusted_benchmark(
+        ticker=bench_info["ticker"],
+        index_currency=bench_info["currency"],
+        target_currency=base_curr,
+        start_date=port_equity.index[0],
+        end_date=port_equity.index[-1],
+        is_currency_adjusted=is_currency_adjusted,
+        raw_prices=prices_df,
     )
 
-    fig_equity.update_layout(
+    # 4. Multi-calendar alignment and relative metrics calculation
+    rel_metrics = calculate_relative_benchmark_metrics(
+        portfolio_curve=port_equity,
+        benchmark_curve=bench_curve,
+        annual_trading_days=252,
+    )
+
+    # 5. Normalized relative comparison (Base 100 or Base 0%)
+    aligned_bench = bench_curve.reindex(port_equity.index).ffill(limit=3).bfill()
+    normalized_port = (port_equity / port_equity.iloc[0]) - 1.0
+    normalized_bench = (aligned_bench / aligned_bench.iloc[0]) - 1.0
+
+    # 6. Plotly overlay (Zero chrome, clean hover)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=normalized_port.index,
+        y=normalized_port,
+        name=f"Strategy ({strategy_title})",
+        line=dict(color="#00c805", width=2),
+        hovertemplate="Strategy: %{y:+.2%}<extra></extra>",
+    ))
+    fx_suffix = f" · {base_curr}" if (is_currency_adjusted and base_curr != bench_info["currency"]) else f" · {bench_info['currency']}"
+    fig.add_trace(go.Scatter(
+        x=normalized_bench.index,
+        y=normalized_bench,
+        name=f"Benchmark ({bench_info['ticker']}{fx_suffix})",
+        line=dict(color="#8b949e", width=1.5, dash="dot"),
+        hovertemplate=f"{bench_info['ticker']}: %{{y:+.2%}}<extra></extra>",
+    ))
+    fig.update_layout(
         template="plotly_dark",
         paper_bgcolor="#0e1117",
-        plot_bgcolor="#131722",
+        plot_bgcolor="#0e1117",
+        hovermode="x unified",
         margin=dict(l=10, r=10, t=10, b=10),
-        height=380,
+        height=340,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         xaxis=dict(showgrid=True, gridcolor="#2a2e39"),
-        yaxis=dict(showgrid=True, gridcolor="#2a2e39"),
+        yaxis=dict(showgrid=True, gridcolor="#2a2e39", tickformat="+.1%"),
     )
-    st.plotly_chart(fig_equity, use_container_width=True, config={"displayModeBar": False, "responsive": True})
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True})
+
+    # 7. Relative Metrics KPI Row
+    rel_c1, rel_c2, rel_c3, rel_c4 = st.columns(4)
+    rel_c1.metric("Beta (β)", f"{rel_metrics['beta']:.2f}", f"R²: {rel_metrics['r_squared']:.1%}")
+    rel_c2.metric("Jensen's Alpha (α)", f"{rel_metrics['alpha']:+.2%}", "Annualized vs Bench")
+    rel_c3.metric("Tracking Error", f"{rel_metrics['tracking_error']:.2%}", "Volatility of Excess")
+    rel_c4.metric("Information Ratio", f"{rel_metrics['information_ratio']:.2f}", f"Bench CAGR: {rel_metrics['benchmark_cagr']:.1%}")
 
 with c_right:
     st.markdown(f"#### 🍩 Asset Allocation ({strategy_title})")
