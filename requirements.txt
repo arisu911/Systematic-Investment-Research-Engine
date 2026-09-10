@@ -11,7 +11,9 @@ plotly>=5.18.0
 
 # Data Providers & HTTP
 yfinance>=0.2.35
+pandas_datareader>=0.10.0
 requests>=2.31.0
+pyarrow>=14.0.0
 
 # Configuration, Validation & Persistence
 pydantic>=2.0.0

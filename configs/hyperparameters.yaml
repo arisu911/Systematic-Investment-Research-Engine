@@ -1,0 +1,36 @@
+# Multi-Asset Quantitative Estimation & Optimization Hyperparameters
+
+lookback_windows:
+  default_days: 504         # 2 Years of daily trading bars
+  short_term_days: 126      # 6 Months
+  medium_term_days: 252     # 1 Year
+  long_term_days: 756       # 3 Years
+
+rebalancing:
+  default_frequency: "Monthly" # Monthly, Quarterly, Annual
+  trading_days_per_year: 248  # Bursa Malaysia standard trading days
+
+monte_carlo:
+  num_simulations: 10000
+  time_horizon_days: 252
+  random_seed: 42
+
+black_litterman:
+  tau: 0.05                  # Scale factor for covariance of prior
+  risk_aversion: 2.50        # Market implied risk aversion coefficient (lambda)
+  default_views:
+    - asset: "1155.KL"
+      view_return: 0.08      # Outperform implied equilibrium by 8%
+      confidence: 0.65       # 65% subjective conviction
+    - asset: "SPY"
+      view_return: 0.10      # Global equity expected return 10%
+      confidence: 0.60
+    - asset: "MGS_10Y"
+      view_return: 0.042     # Sovereign bond yield 4.2%
+      confidence: 0.85
+
+optimization:
+  solver: "SLSQP"
+  max_iterations: 1000
+  tolerance: 1e-7
+  risk_free_rate: 0.030      # 3.0% BNM OPR baseline proxy

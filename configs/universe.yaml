@@ -1,0 +1,98 @@
+# Multi-Asset Quantitative Universe Configuration
+# Covers domestic Bursa Malaysia, global offshore equities, sovereign fixed income, commodities, and FX.
+
+base_currency: "MYR"
+domestic_market: "MY"
+
+benchmarks:
+  equity_domestic: "^KLSE"          # FTSE Bursa Malaysia KLCI
+  equity_global: "SPY"             # S&P 500 ETF Trust
+  balanced_domestic: "60_40_MGS"   # 60% ^KLSE + 40% MGS 10Y
+
+asset_classes:
+  - id: "domestic_equity"
+    name: "Malaysian Equities (Bursa)"
+    domicile: "domestic"
+    assets:
+      - symbol: "1155.KL"
+        name: "Malayan Banking Berhad (Maybank)"
+        sector: "Financials"
+        weight_mkt: 0.18
+      - symbol: "1023.KL"
+        name: "CIMB Group Holdings Berhad"
+        sector: "Financials"
+        weight_mkt: 0.12
+      - symbol: "1295.KL"
+        name: "Public Bank Berhad"
+        sector: "Financials"
+        weight_mkt: 0.12
+      - symbol: "5347.KL"
+        name: "Tenaga Nasional Berhad"
+        sector: "Utilities"
+        weight_mkt: 0.10
+      - symbol: "5183.KL"
+        name: "Petronas Chemicals Group Berhad"
+        sector: "Materials"
+        weight_mkt: 0.08
+      - symbol: "6742.KL"
+        name: "YTL Power International Berhad"
+        sector: "Utilities"
+        weight_mkt: 0.06
+
+  - id: "offshore_equity"
+    name: "Global & Offshore Equities"
+    domicile: "offshore"
+    assets:
+      - symbol: "SPY"
+        name: "SPDR S&P 500 ETF Trust"
+        sector: "US Broad Market"
+        weight_mkt: 0.14
+      - symbol: "QQQ"
+        name: "Invesco QQQ Trust (Nasdaq 100)"
+        sector: "US Technology"
+        weight_mkt: 0.08
+      - symbol: "EEM"
+        name: "iShares MSCI Emerging Markets ETF"
+        sector: "Emerging Markets"
+        weight_mkt: 0.04
+      - symbol: "ACWI"
+        name: "iShares MSCI ACWI ETF"
+        sector: "Global All-Country"
+        weight_mkt: 0.08
+
+  - id: "fixed_income"
+    name: "Sovereign Fixed Income"
+    domicile: "mixed"
+    assets:
+      - symbol: "MGS_10Y"
+        name: "Malaysian Government Securities 10Y Benchmark"
+        domicile: "domestic"
+        sector: "Sovereign Debt"
+        weight_mkt: 0.20
+      - symbol: "MGS_5Y"
+        name: "Malaysian Government Securities 5Y Benchmark"
+        domicile: "domestic"
+        sector: "Sovereign Debt"
+        weight_mkt: 0.10
+      - symbol: "US_10Y"
+        name: "US 10-Year Treasury Yield Proxy"
+        domicile: "offshore"
+        sector: "US Sovereign"
+        weight_mkt: 0.10
+
+  - id: "commodities_fx"
+    name: "Commodities & Foreign Exchange"
+    domicile: "offshore"
+    assets:
+      - symbol: "GC=F"
+        name: "Gold Futures (COMEX / USD)"
+        sector: "Precious Metals"
+        weight_mkt: 0.05
+      - symbol: "CL=F"
+        name: "Crude Oil WTI Futures"
+        sector: "Energy"
+        weight_mkt: 0.05
+      - symbol: "MYR=X"
+        name: "USD/MYR Spot Exchange Rate"
+        sector: "FX Currency"
+        weight_mkt: 0.00

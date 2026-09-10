@@ -1,0 +1,24 @@
+# Institutional Portfolio Allocation Mandates & Risk Limits
+
+mandates:
+  max_offshore_exposure: 0.30     # Maximum 30% overseas assets (EPF statutory regulatory limit)
+  min_cash_buffer: 0.05           # Minimum 5% risk-free cash/liquidity reserve
+  max_single_asset: 0.20          # Maximum 20% concentration in any single security
+  max_sector_exposure: 0.35       # Maximum 35% concentration in any single industry sector
+  min_domestic_equity: 0.25       # Minimum 25% domestic Bursa Malaysia equity commitment
+
+frictions:
+  bursa_brokerage_bps: 10.0       # 0.10% standard institutional brokerage
+  bursa_clearing_bps: 3.0         # 0.03% Bursa exchange clearing fee
+  bursa_stamp_duty_bps: 10.0      # 0.10% statutory stamp duty (RM 1 per RM 1,000)
+  bursa_stamp_duty_cap: 1000.0    # RM 1,000 maximum stamp duty cap per contract note
+  offshore_brokerage_bps: 2.0     # 0.02% US/international execution commission
+  bid_ask_spread_bps: 6.0         # Blended half-spread liquidity drag
+  rebalance_slippage_bps: 4.0     # Market impact execution slippage
+
+tail_risk:
+  confidence_levels:
+    - 0.95
+    - 0.99
+  max_acceptable_mvar_95: 0.025   # Daily modified Cornish-Fisher VaR threshold (2.5%)
+  drawdown_stop_loss: 0.15        # Portfolio circuit breaker at 15% peak drawdown
