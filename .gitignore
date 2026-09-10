@@ -42,5 +42,6 @@ htmlcov/
 # Project caches & temporary files
 .cache/
 data/cache/
+data/raw/
 *.tmp
 *.log

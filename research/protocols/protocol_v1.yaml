@@ -1,0 +1,186 @@
+protocol_version: "1.0.0"
+engine_version: "0.1.0"
+description: "Standard Global Systematic Multi-Market Momentum, Reversion, Breakout & Macro Protocol"
+date_range:
+  start_date: "2019-01-01"
+  end_date: "2024-12-31"
+
+markets:
+  - market_code: "MY"
+    name: "Malaysia (Bursa)"
+    benchmark: "^KLSE"
+    currency: "MYR"
+    trading_days: 248
+    universe:
+      - symbol: "^KLSE"
+        name: "FTSE Bursa Malaysia KLCI"
+      - symbol: "1155.KL"
+        name: "Malayan Banking Berhad (Maybank)"
+      - symbol: "1295.KL"
+        name: "Public Bank Berhad"
+      - symbol: "5347.KL"
+        name: "Tenaga Nasional Berhad"
+      - symbol: "1023.KL"
+        name: "CIMB Group Holdings Berhad"
+      - symbol: "6742.KL"
+        name: "YTL Power International Berhad"
+    macro_proxies:
+      - symbol: "MYR=X"
+        name: "USD/MYR Spot"
+      - symbol: "BZ=F"
+        name: "Brent Crude Oil"
+    costs:
+      brokerage_bps: 10.0
+      clearing_fee_bps: 3.0
+      stamp_duty_bps: 10.0
+      bid_ask_spread_bps: 12.0
+      default_slippage_bps: 8.0
+      minimum_commission: 8.0
+
+  - market_code: "US"
+    name: "United States"
+    benchmark: "SPY"
+    currency: "USD"
+    trading_days: 252
+    universe:
+      - symbol: "SPY"
+        name: "SPDR S&P 500 ETF"
+      - symbol: "QQQ"
+        name: "Invesco QQQ Trust"
+      - symbol: "AAPL"
+        name: "Apple Inc."
+      - symbol: "MSFT"
+        name: "Microsoft Corporation"
+      - symbol: "NVDA"
+        name: "NVIDIA Corporation"
+    macro_proxies:
+      - symbol: "^VIX"
+        name: "CBOE Volatility Index"
+      - symbol: "^TNX"
+        name: "10Y Treasury Yield"
+    costs:
+      brokerage_bps: 2.0
+      clearing_fee_bps: 0.5
+      stamp_duty_bps: 0.0
+      bid_ask_spread_bps: 3.0
+      default_slippage_bps: 3.0
+      minimum_commission: 1.0
+
+  - market_code: "JP"
+    name: "Japan"
+    benchmark: "^N225"
+    currency: "JPY"
+    trading_days: 245
+    universe:
+      - symbol: "^N225"
+        name: "Nikkei 225 Stock Average"
+      - symbol: "7203.T"
+        name: "Toyota Motor Corp."
+      - symbol: "6758.T"
+        name: "Sony Group Corp."
+    macro_proxies:
+      - symbol: "JPY=X"
+        name: "USD/JPY Spot"
+    costs:
+      brokerage_bps: 5.0
+      clearing_fee_bps: 1.0
+      stamp_duty_bps: 0.0
+      bid_ask_spread_bps: 6.0
+      default_slippage_bps: 4.0
+      minimum_commission: 50.0
+
+  - market_code: "EU"
+    name: "Europe"
+    benchmark: "^GDAXI"
+    currency: "EUR"
+    trading_days: 255
+    universe:
+      - symbol: "^GDAXI"
+        name: "DAX Performance Index"
+      - symbol: "SAP.DE"
+        name: "SAP SE"
+    macro_proxies:
+      - symbol: "EURUSD=X"
+        name: "EUR/USD Spot"
+    costs:
+      brokerage_bps: 6.0
+      clearing_fee_bps: 1.5
+      stamp_duty_bps: 0.0
+      bid_ask_spread_bps: 7.0
+      default_slippage_bps: 5.0
+      minimum_commission: 3.0
+
+strategy_matrix:
+  - family: "Time-Series Momentum"
+    type: "TimeSeriesMomentum"
+    variants:
+      - name: "TS Momentum (120d Lookback / 20d Hold)"
+        parameters:
+          lookback_days: 120
+          holding_days: 20
+          vol_scale: true
+      - name: "TS Momentum (60d Lookback / 10d Hold)"
+        parameters:
+          lookback_days: 60
+          holding_days: 10
+          vol_scale: true
+
+  - family: "Moving Average Momentum"
+    type: "MovingAverageMomentum"
+    variants:
+      - name: "Dual MA Crossover (20 / 100)"
+        parameters:
+          fast_period: 20
+          slow_period: 100
+          signal_type: "crossover"
+      - name: "Dual MA Crossover (10 / 50)"
+        parameters:
+          fast_period: 10
+          slow_period: 50
+          signal_type: "crossover"
+
+  - family: "Z-Score Mean Reversion"
+    type: "MeanReversion"
+    variants:
+      - name: "Z-Score Reversion (20d / 2.0 Entry)"
+        parameters:
+          window: 20
+          entry_z: 2.0
+          exit_z: 0.5
+
+  - family: "Donchian Breakout"
+    type: "DonchianBreakout"
+    variants:
+      - name: "Donchian Breakout (50d Entry / 25d Exit)"
+        parameters:
+          lookback: 50
+          exit_lookback: 25
+
+  - family: "Composite Factor"
+    type: "CompositeFactor"
+    variants:
+      - name: "Composite Momentum + Low Vol"
+        parameters:
+          momentum_weight: 0.6
+          low_vol_weight: 0.4
+          entry_threshold: 0.5
+
+  - family: "Macro-Conditioned Momentum"
+    type: "MacroMomentum"
+    variants:
+      - name: "USD/MYR Filtered Momentum"
+        parameters:
+          lookback_days: 120
+          holding_days: 20
+          macro_symbol: "MYR=X"
+          macro_threshold: 0.01
+
+validation_parameters:
+  walk_forward:
+    train_bars: 500
+    test_bars: 125
+    step_bars: 125
+  robustness:
+    cost_sweep_bps: [0.0, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0]
+    slippage_sweep_bps: [0.0, 2.0, 5.0, 10.0, 15.0, 20.0]
+    monte_carlo_simulations: 1000

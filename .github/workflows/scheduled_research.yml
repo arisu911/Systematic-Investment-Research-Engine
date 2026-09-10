@@ -1,0 +1,66 @@
+name: Automated Scheduled Research Engine
+
+on:
+  schedule:
+    # Run every Sunday at 00:00 UTC (weekly institutional research refresh)
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+    inputs:
+      force_demo:
+        description: 'Force demo/synthetic fallback data if public APIs throttled'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  research-pipeline:
+    name: Execute Cross-Market Quantitative Pipeline
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+
+    - name: Install Quant Engine Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -e .
+
+    - name: Step 1 - Automated Market Data Ingestion & Validation
+      run: |
+        if [ "${{ github.event.inputs.force_demo }}" = "true" ]; then
+          python scripts/update_data.py --force-demo
+        else
+          python scripts/update_data.py
+        fi
+
+    - name: Step 2 - Execute Systematic Strategy & Walk-Forward Sweep
+      run: |
+        if [ "${{ github.event.inputs.force_demo }}" = "true" ]; then
+          python scripts/run_research.py --force-demo
+        else
+          python scripts/run_research.py
+        fi
+
+    - name: Step 3 - Synthesize Empirical Findings
+      run: |
+        python scripts/generate_findings.py
+
+    - name: Step 4 - Verify Research Database Artifacts
+      run: |
+        ls -la results/database/
+        python -c "from quant_engine.research.store import ResearchStore; store = ResearchStore(); print('Total Experiments in DB:', len(store.get_strategy_results()))"
+
+    - name: Upload Research Database Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: quantitative-research-database
+        path: results/database/research.db
+        retention-days: 90
