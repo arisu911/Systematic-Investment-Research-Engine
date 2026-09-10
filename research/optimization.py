@@ -191,15 +191,18 @@ class PortfolioOptimizer:
             # Asset level ERC
             def asset_risk_budget_obj(w):
                 port_var = np.dot(w.T, np.dot(cov, w))
+                if port_var < 1e-10:
+                    return 0.0
                 marginal_contrib = np.dot(cov, w)
                 asset_rc = w * marginal_contrib
-                target_rc = port_var / n
-                return np.sum((asset_rc - target_rc) ** 2)
+                # Dimensionless relative risk error: (RC_i / port_var) - (1 / n)
+                rel_error = (asset_rc / port_var) - (1.0 / n)
+                return np.sum(rel_error ** 2)
 
             obj_func = asset_risk_budget_obj
 
         constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
-        bounds = tuple((0.005, 1.0) for _ in range(n))
+        bounds = tuple((0.001, 1.0) for _ in range(n))
         init_guess = np.ones(n) / n
 
         res = minimize(
@@ -208,7 +211,7 @@ class PortfolioOptimizer:
             method="SLSQP",
             bounds=bounds,
             constraints=constraints,
-            options={"maxiter": 1000, "ftol": 1e-9},
+            options={"maxiter": 1000, "ftol": 1e-12},
         )
 
         weights = res.x if res.success else init_guess

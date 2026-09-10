@@ -1,0 +1,38 @@
+# Multi-Model Strategy Parameters Configuration
+
+strategies:
+  max_sharpe:
+    name: "Maximum Sharpe Ratio (MVO)"
+    description: "Mean-variance optimization maximizing risk-adjusted return over volatility."
+    lookback_days: 252
+    max_single_asset: 0.25
+    solver: "SLSQP"
+
+  min_volatility:
+    name: "Minimum Volatility"
+    description: "Constrained quadratic variance minimization producing the defensive boundary."
+    lookback_days: 252
+    max_single_asset: 0.25
+    solver: "SLSQP"
+
+  risk_parity:
+    name: "Risk Parity (Equal Risk Contribution)"
+    description: "Equalizes marginal risk contribution (RC_i = sigma_p / N) across all tradable assets."
+    lookback_days: 252
+    tolerance: 1e-8
+    solver: "SLSQP"
+
+  top_n_momentum:
+    name: "Cross-Sectional Top-N Momentum"
+    description: "Ranks assets by rolling trailing return and equal-weights the top N momentum leaders."
+    lookback_days: 126
+    top_n: 5
+
+  inverse_volatility:
+    name: "Inverse Volatility Allocation"
+    description: "Heuristic risk-budgeting weighting assets inversely proportional to realized volatility."
+    lookback_days: 252
+
+  equal_weight:
+    name: "Equal Weight (1/N)"
+    description: "Unbiased benchmark allocating 1/N capital across all tradable instruments."

@@ -45,23 +45,38 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Retrieve Global Session State
+capital = float(st.session_state.get("capital_amount", 100_000.0))
+base_curr = st.session_state.get("selected_currency", "USD")
+active_strat = st.session_state.get("selected_strategy", "max_sharpe")
+bench_choice_default = st.session_state.get("benchmark_ticker", "^GSPC")
+is_hedged = st.session_state.get("hedged_toggle", False)
+
+from data.fx_engine import get_currency_symbol, SUPPORTED_CURRENCIES
+curr_sym = get_currency_symbol(base_curr)
+
 # Control Panel
 b_c1, b_c2, b_c3, b_c4 = st.columns(4)
 
-base_curr = b_c1.selectbox("Base Currency", ["USD", "MYR", "LOCAL"], index=0, key="backtest_curr")
-strategy_type = b_c2.selectbox(
-    "Optimization Method",
-    ["Max Sharpe (MVO)", "Minimum Volatility", "Risk Parity (ERC)", "Black-Litterman"],
-    index=0,
-)
-rebal_freq = b_c3.selectbox("Rebalancing Schedule", ["Monthly", "Quarterly", "Annual"], index=0)
-bench_choice = b_c4.selectbox("Benchmark", ["^GSPC", "^KLSE", "^N225", "^NDX"], index=0)
+curr_options = SUPPORTED_CURRENCIES + ["LOCAL"]
+base_curr = b_c1.selectbox("Base Currency", curr_options, index=curr_options.index(base_curr) if base_curr in curr_options else 0, key="backtest_curr")
+strat_keys = list(STRATEGY_REGISTRY.keys())
+strat_names = list(STRATEGY_REGISTRY.values())
+cur_idx = strat_keys.index(active_strat) if active_strat in strat_keys else 0
+strategy_type_name = b_c2.selectbox("Strategy Model", strat_names, index=cur_idx)
+strategy_type = strat_keys[strat_names.index(strategy_type_name)]
 
-prices_df, is_demo = get_cached_universe_prices(
-    start_date="2019-01-01",
-    end_date="2024-12-31",
-    base_currency=base_curr,
-)
+rebal_freq = b_c3.selectbox("Rebalancing Schedule", ["Monthly", "Quarterly", "Annual"], index=0)
+benchmarks = ["^GSPC", "^KLSE", "^N225", "^NDX", "^RUT"]
+cur_bench_idx = benchmarks.index(bench_choice_default) if bench_choice_default in benchmarks else 0
+bench_choice = b_c4.selectbox("Benchmark", benchmarks, index=cur_bench_idx)
+
+with st.spinner("Executing strategy dispatch and portfolio rebalancing simulation..."):
+    prices_df, is_demo = get_cached_universe_prices(
+        start_date="2019-01-01",
+        end_date="2024-12-31",
+        base_currency=base_curr,
+    )
 
 registry = load_universe_registry()
 tradable_symbols = get_tradable_tickers(registry)
@@ -75,43 +90,39 @@ tradable_prices = prices_df[available_tradable]
 returns_df = tradable_prices.pct_change().dropna()
 bench_series = prices_df[bench_choice] if bench_choice in prices_df.columns else prices_df.iloc[:, 0]
 
-# Optimizer
-optimizer = PortfolioOptimizer(returns_df, risk_free_rate=0.040, registry=registry, filter_tradable=False)
+# Strategy Dispatcher
+from research.strategies import StrategyDispatcher
+strat_res = StrategyDispatcher.dispatch(
+    strategy_name=strategy_type,
+    returns_df=returns_df,
+    lookback_days=252,
+    risk_free_rate=0.040,
+    max_single_asset=0.25,
+    top_n=5,
+    registry=registry,
+    filter_tradable=False,
+)
 
-if strategy_type == "Max Sharpe (MVO)":
-    opt = optimizer.optimize_mean_variance(objective="max_sharpe")
-elif strategy_type == "Minimum Volatility":
-    opt = optimizer.optimize_mean_variance(objective="min_volatility")
-elif strategy_type == "Risk Parity (ERC)":
-    opt = optimizer.optimize_risk_parity(mode="asset_level")
-else:
-    views = [
-        {"asset_long": "NVDA", "asset_short": "7203.T", "relative_return": 0.04, "confidence": 0.70},
-        {"asset_long": "1155.KL", "view_return": 0.08, "confidence": 0.65},
-    ]
-    opt = optimizer.optimize_black_litterman(views_list=views)
-
-weights = opt["weights"]
-assets = opt["assets"]
+weights = strat_res["weights"]
+assets = strat_res["assets"]
 
 backtester = PortfolioBacktester(
     prices_df=tradable_prices[assets],
     benchmark_prices=bench_series,
     annual_trading_days=252,
-    initial_capital=100_000.0,
+    initial_capital=capital,
 )
 
 equity_df, summary = backtester.run_rebalancing_backtest(weights=weights, frequency=rebal_freq)
 
 # Top KPIs
 m1, m2, m3, m4, m5, m6 = st.columns(6)
-currency_sym = "$" if base_curr == "USD" else "RM " if base_curr == "MYR" else ""
-m1.metric("Final NAV", f"{currency_sym}{summary['ending_nav']:,.0f}", f"{summary['total_return']:+.1%}")
+m1.metric(f"Final NAV ({base_curr})", f"{curr_sym}{summary['ending_nav']:,.0f}", f"{summary['total_return']:+.1%}")
 m2.metric("CAGR", f"{summary['cagr']:.2%}")
 m3.metric("Annual Volatility", f"{summary['annualized_volatility']:.2%}")
 m4.metric("Sharpe Ratio", f"{summary['sharpe_ratio']:.2f}")
 m5.metric("Max Drawdown", f"{summary['max_drawdown']:.2%}", delta_color="inverse")
-m6.metric("Total Frictions", f"{currency_sym}{summary['total_friction_drag']:,.2f}")
+m6.metric("Total Frictions", f"{curr_sym}{summary['total_friction_drag']:,.2f}")
 
 st.markdown("---")
 

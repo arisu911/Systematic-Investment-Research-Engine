@@ -52,3 +52,39 @@ def test_risk_attribution_sums_to_one():
     # Percentage risk contributions must sum exactly to 1.0 (100%)
     pcr_sum = attrib_df["Pct_Risk_Contribution"].sum()
     assert np.isclose(pcr_sum, 1.0, atol=1e-4)
+
+
+def test_nominal_var_cvar_scaling():
+    np.random.seed(42)
+    returns = np.random.normal(0.0005, 0.012, 1000)
+    
+    cap_100k = 100_000.0
+    cap_500k = 500_000.0
+    
+    res_100k = RiskEngine.calculate_nominal_var_cvar(returns, capital=cap_100k, confidence_level=0.95, horizon_days=1)
+    res_500k = RiskEngine.calculate_nominal_var_cvar(returns, capital=cap_500k, confidence_level=0.95, horizon_days=1)
+    
+    # Percentages must be identical
+    assert np.isclose(res_100k["cornish_fisher_var"], res_500k["cornish_fisher_var"])
+    
+    # Nominal cash amounts must scale 5x
+    assert np.isclose(res_500k["nominal_cornish_fisher_var"], 5.0 * res_100k["nominal_cornish_fisher_var"], rtol=1e-4)
+    assert np.isclose(res_500k["nominal_parametric_var"], 5.0 * res_100k["nominal_parametric_var"], rtol=1e-4)
+    assert np.isclose(res_500k["nominal_historical_var"], 5.0 * res_100k["nominal_historical_var"], rtol=1e-4)
+
+
+def test_multi_horizon_nominal_var():
+    np.random.seed(42)
+    returns = np.random.normal(0.0002, 0.015, 1000)
+    
+    df = RiskEngine.calculate_multi_horizon_nominal_var(returns, capital=250_000.0, horizons=[1, 5, 21], confidence_levels=[0.95, 0.99])
+    
+    assert len(df) == 6 # 3 horizons x 2 confidence levels
+    assert set(df["Horizon_Days"]) == {1, 5, 21}
+    assert set(df["Confidence"]) == {"95%", "99%"}
+    
+    # 21-day nominal VaR must be greater than 1-day nominal VaR
+    var_1d_95 = df[(df["Horizon_Days"] == 1) & (df["Confidence"] == "95%")]["Nominal_Cornish_Fisher_VaR"].iloc[0]
+    var_21d_95 = df[(df["Horizon_Days"] == 21) & (df["Confidence"] == "95%")]["Nominal_Cornish_Fisher_VaR"].iloc[0]
+    assert var_21d_95 > var_1d_95
+

@@ -126,6 +126,14 @@ def generate_deterministic_multi_market_prices(
             vol, drift, init = 0.06, 0.01, 103.0
             daily_ret = (drift - 0.5 * vol**2) * dt + vol * np.sqrt(dt) * correlated_draws[:, i]
             data[sym] = init * np.exp(np.cumsum(daily_ret))
+        elif sym == "EURUSD=X":
+            vol, drift, init = 0.06, 0.005, 1.08
+            daily_ret = (drift - 0.5 * vol**2) * dt + vol * np.sqrt(dt) * correlated_draws[:, i]
+            data[sym] = init * np.exp(np.cumsum(daily_ret))
+        elif sym == "GBPUSD=X":
+            vol, drift, init = 0.07, 0.005, 1.28
+            daily_ret = (drift - 0.5 * vol**2) * dt + vol * np.sqrt(dt) * correlated_draws[:, i]
+            data[sym] = init * np.exp(np.cumsum(daily_ret))
         elif "=F" in sym:
             # Commodities
             init = 2300.0 if "GC" in sym else 80.0 if "BZ" in sym else 4.20
@@ -245,9 +253,11 @@ def load_universe_prices(
     # Align calendars across Bursa, NYSE, TSE
     aligned_df = align_cross_market_calendars(raw_df, max_ffill_days=max_ffill_days)
 
-    # Normalize currency
+    # Normalize currency via FXEngine
+    from data.fx_engine import FXEngine
     registry = load_universe_registry()
-    normalized_df = normalize_currency(aligned_df, target_currency=base_currency, registry=registry)
+    fx_engine = FXEngine(aligned_df, registry=registry)
+    normalized_df = fx_engine.convert_asset_prices(target_currency=base_currency)
 
     # Filter to requested symbols that exist
     final_cols = [s for s in symbols if s in normalized_df.columns]

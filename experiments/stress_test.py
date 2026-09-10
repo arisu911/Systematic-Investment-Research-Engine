@@ -72,6 +72,7 @@ class StressTestEngine:
         weights: np.ndarray,
         factor_name: str,
         shock_magnitude_pct: float,
+        capital: float = 100_000.0,
     ) -> Dict[str, Any]:
         """Estimate portfolio impact of an instantaneous macroeconomic shock.
         
@@ -79,6 +80,7 @@ class StressTestEngine:
             weights: Portfolio asset weights vector summing to 1.0.
             factor_name: e.g. '^VIX', '^TNX', 'BZ=F', 'USDMYR=X'.
             shock_magnitude_pct: Shock percentage, e.g. +1.00 for VIX doubling (+100%).
+            capital: Total portfolio nominal capital.
         """
         w = np.array(weights) / np.sum(weights)
         asset_shocks = np.zeros(len(self.assets))
@@ -108,6 +110,7 @@ class StressTestEngine:
                 "weight": float(w[i]),
                 "estimated_shock": float(asset_shocks[i]),
                 "impact_contribution": float(w[i] * asset_shocks[i]),
+                "nominal_impact": float(w[i] * asset_shocks[i] * capital),
             }
             for i in range(len(self.assets))
         }
@@ -116,10 +119,12 @@ class StressTestEngine:
             "factor": factor_name,
             "shock_magnitude_pct": shock_magnitude_pct,
             "portfolio_impact_pct": port_impact,
+            "nominal_portfolio_impact": port_impact * capital,
+            "capital": capital,
             "asset_breakdown": asset_breakdown,
         }
 
-    def run_standard_macro_scenarios(self, weights: np.ndarray) -> List[Dict[str, Any]]:
+    def run_standard_macro_scenarios(self, weights: np.ndarray, capital: float = 100_000.0) -> List[Dict[str, Any]]:
         """Run standard suite of 5 macro shock stress tests."""
         scenarios = [
             {
@@ -156,14 +161,14 @@ class StressTestEngine:
 
         results = []
         for s in scenarios:
-            res = self.simulate_macro_shock(weights, s["factor"], s["shock"])
+            res = self.simulate_macro_shock(weights, s["factor"], s["shock"], capital=capital)
             res["scenario_name"] = s["name"]
             res["description"] = s["description"]
             results.append(res)
 
         return results
 
-    def replay_historical_crises(self, weights: np.ndarray) -> List[Dict[str, Any]]:
+    def replay_historical_crises(self, weights: np.ndarray, capital: float = 100_000.0) -> List[Dict[str, Any]]:
         """Replay exact historical crisis periods or compute stylized shocks."""
         w = np.array(weights) / np.sum(weights)
 
@@ -231,6 +236,8 @@ class StressTestEngine:
                 "Description": crisis["description"],
                 "Estimated_Return": tot_ret,
                 "Estimated_Max_Drawdown": max_dd,
+                "Nominal_Loss": tot_ret * capital,
+                "Nominal_Max_Drawdown": max_dd * capital,
                 "Evaluation_Mode": mode,
             })
 

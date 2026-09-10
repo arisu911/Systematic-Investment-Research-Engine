@@ -118,8 +118,13 @@ class RiskEngine:
         }
 
     @staticmethod
-    def calculate_risk_attribution(weights: np.ndarray, cov_matrix: np.ndarray, asset_names: Optional[List[str]] = None) -> pd.DataFrame:
-        """Compute asset-level Marginal Risk Contribution and Percentage Risk Contribution as a DataFrame."""
+    def calculate_risk_attribution(
+        weights: np.ndarray,
+        cov_matrix: np.ndarray,
+        asset_names: Optional[List[str]] = None,
+        capital: float = 100_000.0,
+    ) -> pd.DataFrame:
+        """Compute asset-level Marginal Risk Contribution, Percentage Contribution, and Nominal Cash Risk."""
         w = np.asarray(weights)
         cov = np.asarray(cov_matrix)
         port_vol = np.sqrt(np.dot(w.T, np.dot(cov, w)))
@@ -127,9 +132,11 @@ class RiskEngine:
         if port_vol < 1e-8:
             mcr = np.zeros(n)
             pcr = np.zeros(n)
+            nominal_rc = np.zeros(n)
         else:
             mcr = np.dot(cov, w) / port_vol
             pcr = (w * mcr) / port_vol
+            nominal_rc = pcr * (port_vol * capital)
 
         names = asset_names if asset_names is not None else [f"Asset_{i+1}" for i in range(n)]
         return pd.DataFrame({
@@ -137,7 +144,62 @@ class RiskEngine:
             "Weight": w,
             "Marginal_Risk_Contribution": mcr,
             "Pct_Risk_Contribution": pcr,
+            "Nominal_Risk_Contribution": nominal_rc,
         })
+
+    @classmethod
+    def calculate_nominal_var_cvar(
+        cls,
+        returns: Union[pd.Series, np.ndarray],
+        capital: float = 100_000.0,
+        confidence_level: float = 0.95,
+        horizon_days: int = 1,
+    ) -> Dict[str, float]:
+        """Calculate percentage and nominal cash Value-at-Risk and Expected Shortfall."""
+        res = cls.calculate_var_cvar(returns, confidence_level=confidence_level, horizon_days=horizon_days)
+        res["capital"] = capital
+        res["horizon_days"] = horizon_days
+        res["confidence_level"] = confidence_level
+        res["nominal_parametric_var"] = res["parametric_var"] * capital
+        res["nominal_historical_var"] = res["historical_var"] * capital
+        res["nominal_cornish_fisher_var"] = res["cornish_fisher_var"] * capital
+        res["nominal_parametric_cvar"] = res["parametric_cvar"] * capital
+        res["nominal_historical_cvar"] = res["historical_cvar"] * capital
+        res["nominal_cornish_fisher_cvar"] = res["cornish_fisher_cvar"] * capital
+        return res
+
+    @classmethod
+    def calculate_multi_horizon_nominal_var(
+        cls,
+        returns: Union[pd.Series, np.ndarray],
+        capital: float = 100_000.0,
+        horizons: Optional[List[int]] = None,
+        confidence_levels: Optional[List[float]] = None,
+    ) -> pd.DataFrame:
+        """Generate matrix of Cash-at-Risk across 1-Day, 5-Day, and 21-Day horizons."""
+        if horizons is None:
+            horizons = [1, 5, 21]
+        if confidence_levels is None:
+            confidence_levels = [0.95, 0.99]
+
+        rows = []
+        for h in horizons:
+            for conf in confidence_levels:
+                data = cls.calculate_nominal_var_cvar(returns, capital=capital, confidence_level=conf, horizon_days=h)
+                horizon_label = f"{h}-Day (1 Month)" if h == 21 else f"{h}-Day (1 Week)" if h == 5 else f"{h}-Day"
+                rows.append({
+                    "Horizon": horizon_label,
+                    "Horizon_Days": h,
+                    "Confidence": f"{conf:.0%}",
+                    "Cornish_Fisher_VaR_Pct": data["cornish_fisher_var"],
+                    "Nominal_Cornish_Fisher_VaR": data["nominal_cornish_fisher_var"],
+                    "Parametric_VaR_Pct": data["parametric_var"],
+                    "Nominal_Parametric_VaR": data["nominal_parametric_var"],
+                    "Historical_VaR_Pct": data["historical_var"],
+                    "Nominal_Historical_VaR": data["nominal_historical_var"],
+                    "Nominal_Cornish_Fisher_CVaR": data["nominal_cornish_fisher_cvar"],
+                })
+        return pd.DataFrame(rows)
 
     @staticmethod
     def calculate_risk_contributions(weights: np.ndarray, cov_matrix: np.ndarray) -> Dict[str, np.ndarray]:

@@ -46,10 +46,12 @@ st.markdown(
 )
 
 # Load full 25-instrument universe
-base_curr = st.session_state.get("base_currency", "USD")
+base_curr = st.session_state.get("selected_currency", st.session_state.get("base_currency", "USD"))
+is_hedged = st.session_state.get("hedged_toggle", False)
+
 prices_df, is_demo = get_cached_universe_prices(
-    start_date="2020-01-01",
-    end_date="2024-12-31",
+    start_date=st.session_state.get("start_date", "2020-01-01"),
+    end_date=st.session_state.get("end_date", "2024-12-31"),
     base_currency=base_curr,
 )
 
@@ -66,7 +68,13 @@ def sort_key(t):
 
 sorted_tickers = sorted(available_tickers, key=sort_key)
 prices_sorted = prices_df[sorted_tickers]
-returns_sorted = prices_sorted.pct_change().dropna()
+
+if is_hedged:
+    from data.fx_engine import FXEngine
+    fx_eng = FXEngine(prices_sorted, registry=registry)
+    returns_sorted = fx_eng.compute_asset_returns(target_currency=base_curr, is_hedged=True)
+else:
+    returns_sorted = prices_sorted.pct_change().dropna()
 
 # 1. Full 25x25 Correlation Matrix Heatmap
 st.markdown("#### 🌐 Full 25x25 Cross-Market Correlation Matrix")
