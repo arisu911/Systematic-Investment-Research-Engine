@@ -16,6 +16,7 @@ class TransactionCostConfig(BaseModel):
     bid_ask_spread_bps: float = Field(default=5.0, description="Typical bid-ask spread in bps")
     default_slippage_bps: float = Field(default=5.0, description="Slippage assumption in bps")
     minimum_commission: float = Field(default=0.0, description="Minimum commission per order in local currency")
+    stamp_duty_cap: Optional[float] = Field(default=None, description="Maximum stamp duty per trade in local currency")
     
     @property
     def total_fixed_fee_bps(self) -> float:
@@ -50,6 +51,16 @@ class MarketConfig(BaseModel):
     universe: List[UniverseAsset] = Field(default_factory=list)
     macro_proxies: List[UniverseAsset] = Field(default_factory=list)
     transaction_costs: TransactionCostConfig = Field(default_factory=TransactionCostConfig)
+
+    @property
+    def trading_days_per_year(self) -> int:
+        """Alias for annual_trading_days."""
+        return self.annual_trading_days
+
+    @property
+    def costs(self) -> TransactionCostConfig:
+        """Alias for transaction_costs."""
+        return self.transaction_costs
 
 
 def load_market_config(market_code: str) -> MarketConfig:

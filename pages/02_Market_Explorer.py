@@ -60,19 +60,29 @@ results_df = store.get_strategy_results(market=selected_m_code, strategy_type=se
 
 # Market Institutional Configuration Card
 m_cfg = load_market_config(selected_m_code)
+tc = getattr(m_cfg, "transaction_costs", getattr(m_cfg, "costs", None))
+trading_days = getattr(m_cfg, "annual_trading_days", getattr(m_cfg, "trading_days_per_year", 252))
+
 c_box = st.container()
 with c_box:
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Benchmark", m_cfg.benchmark_symbol, f"{m_cfg.trading_days_per_year} Trading Days/Yr")
+    c1.metric("Benchmark", m_cfg.benchmark_symbol, f"{trading_days} Trading Days/Yr")
     c2.metric("Currency", m_cfg.currency, "Local Settlement")
+    
+    brokerage_bps = getattr(tc, "brokerage_bps", 5.0) if tc else 5.0
+    clearing_bps = getattr(tc, "clearing_fee_bps", 1.0) if tc else 1.0
+    min_comm = getattr(tc, "minimum_commission", 0.0) if tc else 0.0
+    stamp_bps = getattr(tc, "stamp_duty_bps", 0.0) if tc else 0.0
+    stamp_cap = getattr(tc, "stamp_duty_cap", 1000.0 if selected_m_code == "MY" else None)
+
     c3.metric(
         "Brokerage & Clearing",
-        f"{m_cfg.costs.brokerage_bps + m_cfg.costs.clearing_fee_bps:.1f} bps",
-        f"Min {m_cfg.costs.minimum_commission:.1f} {m_cfg.currency}",
+        f"{brokerage_bps + clearing_bps:.1f} bps",
+        f"Min {min_comm:.1f} {m_cfg.currency}",
     )
-    stamp_info = f"{m_cfg.costs.stamp_duty_bps:.0f} bps" if m_cfg.costs.stamp_duty_bps > 0 else "0.0 bps (None)"
-    if m_cfg.costs.stamp_duty_cap:
-        stamp_info += f" (Cap {m_cfg.costs.stamp_duty_cap:.0f})"
+    stamp_info = f"{stamp_bps:.0f} bps" if stamp_bps > 0 else "0.0 bps (None)"
+    if stamp_cap:
+        stamp_info += f" (Cap {stamp_cap:.0f})"
     c4.metric("Stamp Duty", stamp_info, "Statutory Friction")
 
 st.markdown('<div class="section-header">MARKET RESEARCH SUMMARY</div>', unsafe_allow_html=True)
