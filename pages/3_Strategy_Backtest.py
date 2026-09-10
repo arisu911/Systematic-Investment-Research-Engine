@@ -22,6 +22,8 @@ import plotly.graph_objects as go
 
 from data.aligner import load_universe_registry, get_tradable_tickers
 from data.loader import get_cached_universe_prices
+from data.fx_engine import get_currency_symbol, SUPPORTED_CURRENCIES
+from research.strategies import StrategyDispatcher, STRATEGY_REGISTRY
 from research.optimization import PortfolioOptimizer
 from experiments.backtester import PortfolioBacktester
 
@@ -52,7 +54,6 @@ active_strat = st.session_state.get("selected_strategy", "max_sharpe")
 bench_choice_default = st.session_state.get("benchmark_ticker", "^GSPC")
 is_hedged = st.session_state.get("hedged_toggle", False)
 
-from data.fx_engine import get_currency_symbol, SUPPORTED_CURRENCIES
 curr_sym = get_currency_symbol(base_curr)
 
 # Control Panel
@@ -91,7 +92,6 @@ returns_df = tradable_prices.pct_change().dropna()
 bench_series = prices_df[bench_choice] if bench_choice in prices_df.columns else prices_df.iloc[:, 0]
 
 # Strategy Dispatcher
-from research.strategies import StrategyDispatcher
 strat_res = StrategyDispatcher.dispatch(
     strategy_name=strategy_type,
     returns_df=returns_df,
