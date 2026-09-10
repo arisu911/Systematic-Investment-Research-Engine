@@ -7,7 +7,7 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.36+-FF4B4B.svg)](https://streamlit.io)
 [![Zero-Cost Data](https://img.shields.io/badge/Data-100%25%20Free%20%26%20Open-success.svg)](data/)
 
-An institutional-grade quantitative research, portfolio capital allocation, and nominal cash-at-risk workstation. Ingests, aligns, optimizes, and stress-tests a **25-instrument global multi-asset universe** spanning **Malaysia**, the **United States**, **Japan**, and **Cross-Market Macro Factors**.
+A quantitative investment research platform for cross-market analysis, systematic portfolio construction, non-Gaussian risk analysis, and portfolio-level execution sizing.
 
 Built strictly on **100% free/open financial endpoints** (`yfinance` + FRED), zero paid API dependencies, dynamic multi-currency FX triangulation, a multi-model strategy dispatcher, and an institutional dark terminal UI (`#0e1117`).
 
