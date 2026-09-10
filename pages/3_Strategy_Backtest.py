@@ -61,6 +61,8 @@ b_c1, b_c2, b_c3, b_c4 = st.columns(4)
 
 curr_options = SUPPORTED_CURRENCIES + ["LOCAL"]
 base_curr = b_c1.selectbox("Base Currency", curr_options, index=curr_options.index(base_curr) if base_curr in curr_options else 0, key="backtest_curr")
+curr_sym = get_currency_symbol(base_curr)
+currency_sym = curr_sym
 strat_keys = list(STRATEGY_REGISTRY.keys())
 strat_names = list(STRATEGY_REGISTRY.values())
 cur_idx = strat_keys.index(active_strat) if active_strat in strat_keys else 0
@@ -136,7 +138,7 @@ fig_eq.add_trace(
         y=equity_df["NAV"],
         name="Net NAV (Post-Friction)",
         line=dict(color="#00c805", width=2.5),
-        hovertemplate=f"{currency_sym}%{{y:,.2f}}<extra></extra>",
+        hovertemplate=f"{curr_sym}%{{y:,.2f}}<extra></extra>",
     )
 )
 fig_eq.add_trace(
@@ -145,7 +147,7 @@ fig_eq.add_trace(
         y=equity_df["Gross_NAV"],
         name="Gross NAV (Zero Frictions)",
         line=dict(color="#38bdf8", width=1.5, dash="dash"),
-        hovertemplate=f"{currency_sym}%{{y:,.2f}}<extra></extra>",
+        hovertemplate=f"{curr_sym}%{{y:,.2f}}<extra></extra>",
     )
 )
 fig_eq.add_trace(
@@ -154,7 +156,7 @@ fig_eq.add_trace(
         y=equity_df["Benchmark_NAV"],
         name=f"Benchmark ({bench_choice})",
         line=dict(color="#64748b", width=1.5, dash="dot"),
-        hovertemplate=f"{currency_sym}%{{y:,.2f}}<extra></extra>",
+        hovertemplate=f"{curr_sym}%{{y:,.2f}}<extra></extra>",
     )
 )
 
