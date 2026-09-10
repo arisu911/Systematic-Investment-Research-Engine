@@ -31,6 +31,7 @@ from data.loader import (
     CACHE_TTL_POLICIES,
 )
 from data.fx_engine import SUPPORTED_CURRENCIES, get_currency_symbol, FXEngine
+from research.strategies import STRATEGY_REGISTRY
 from research.utils import (
     inject_metric_css,
     format_money,
