@@ -1,14 +1,17 @@
-"""Institutional Multi-Asset Portfolio - Executive Summary Tear Sheet.
+"""Executive Summary: Consolidated Multi-Asset Portfolio Analytics Workstation.
 
-Consolidated high-density tearsheet displaying key portfolio KPIs, optimal allocation
-breakdown, statutory regulatory compliance status, and historical returns heatmap.
+Displays:
+1. Executive KPI Scorecard (CAGR, Annualized Volatility, Sharpe, Sortino, Max Drawdown, Calmar).
+2. Capital Growth Curve ($100k baseline) vs Selected Global Benchmark (^KLSE, ^GSPC, ^N225).
+3. Optimal Asset Allocation Donut Chart (Asset Level & Regional Cluster Level).
+4. Interactive Model Selector: Max Sharpe, Min Volatility, Risk Parity, Black-Litterman.
+5. Monthly Returns Performance Matrix Heatmap.
 """
 
 import sys
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# Add root directory to sys.path
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -18,179 +21,241 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-import yaml
 
-from data.loader import get_cached_multi_asset_data
+from data.aligner import load_universe_registry, get_tradable_tickers
+from data.loader import get_cached_universe_prices
 from research.optimization import PortfolioOptimizer
 from experiments.backtester import PortfolioBacktester
 
-st.set_page_config(page_title="Executive Tear Sheet", page_icon="📑", layout="wide")
-
-# Load Universe & Risk Configurations
-with open(_ROOT / "configs" / "universe.yaml", "r", encoding="utf-8") as f:
-    u_cfg = yaml.safe_load(f)
-
-core_symbols = []
-offshore_flags = []
-asset_metadata = {}
-
-for ac in u_cfg.get("asset_classes", []):
-    domicile = ac.get("domicile", "domestic")
-    for a in ac.get("assets", []):
-        sym = a["symbol"]
-        if sym not in core_symbols:
-            core_symbols.append(sym)
-            is_offshore = (domicile == "offshore") or (a.get("domicile") == "offshore")
-            offshore_flags.append(is_offshore)
-            asset_metadata[sym] = {
-                "name": a.get("name", sym),
-                "sector": a.get("sector", "General"),
-                "class": ac.get("name", "Other"),
-                "is_offshore": is_offshore,
-                "weight_mkt": a.get("weight_mkt", 0.05),
-            }
+try:
+    st.set_page_config(page_title="Executive Summary", page_icon="🏛️", layout="wide")
+except Exception:
+    pass
 
 st.markdown(
     """
     <div style="background-color: #131722; border: 1px solid #2a2e39; border-left: 5px solid #00c805;
-                padding: 14px 18px; border-radius: 4px; margin-bottom: 18px;">
-        <span style="font-size: 11px; font-weight: 800; color: #00c805; letter-spacing: 1px; text-transform: uppercase;">
-            PORTFOLIO TEAR SHEET • CONSOLIDATED REPORT
+                padding: 14px 18px; border-radius: 4px; margin-bottom: 20px;">
+        <span style="font-size: 11px; font-weight: 800; color: #00c805; letter-spacing: 1.5px; text-transform: uppercase;">
+            PORTFOLIO TEARSHEET • EXECUTIVE ANALYTICS
         </span>
-        <h3 style="margin: 3px 0 0 0; color: #ffffff; font-size: 20px; font-weight: 700;">
-            Executive Multi-Asset Tear Sheet & Mandate Audit
-        </h3>
+        <h2 style="margin: 4px 0 0 0; color: #ffffff; font-size: 22px; font-weight: 700;">
+            Multi-Market Optimal Allocation & Tearsheet
+        </h2>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# Sidebar Controls
-st.sidebar.markdown("### ⚙️ Tear Sheet Settings")
-lookback_choice = st.sidebar.selectbox("Lookback Horizon", ["1 Year (252d)", "2 Years (504d)", "3 Years (756d)"], index=1)
-lookback_days = 252 if "1" in lookback_choice else 756 if "3" in lookback_choice else 504
-rebal_freq = st.sidebar.selectbox("Rebalance Schedule", ["Monthly", "Quarterly", "Annual"], index=0)
-force_offline = st.sidebar.checkbox("Force Offline Mode", value=False)
+# Configuration controls
+c_ctl1, c_ctl2, c_ctl3, c_ctl4 = st.columns(4)
 
-end_dt = datetime.now()
-start_dt = end_dt - timedelta(days=int(lookback_days * 1.55))
-
-prices_df, is_demo = get_cached_multi_asset_data(
-    core_symbols,
-    start_date=start_dt.strftime("%Y-%m-%d"),
-    end_date=end_dt.strftime("%Y-%m-%d"),
-    base_currency="MYR",
-    force_offline=force_offline,
+base_curr = c_ctl1.selectbox(
+    "Currency Normalization",
+    ["USD", "MYR", "LOCAL"],
+    index=0,
+    key="exec_base_curr",
 )
 
-valid_assets = [s for s in core_symbols if s in prices_df.columns]
-valid_prices = prices_df[valid_assets].dropna()
-returns_df = valid_prices.pct_change().dropna()
-offshore_mask = [asset_metadata[s]["is_offshore"] for s in valid_assets]
-
-# Benchmark: Domestic 60/40 (^KLSE + MGS 10Y)
-bench_equity = valid_prices["^KLSE"] if "^KLSE" in valid_prices.columns else valid_prices.iloc[:, 0]
-bench_bond = valid_prices["MGS_10Y"] if "MGS_10Y" in valid_prices.columns else valid_prices.iloc[:, -1]
-bench_60_40 = 0.60 * (bench_equity / bench_equity.iloc[0]) + 0.40 * (bench_bond / bench_bond.iloc[0])
-bench_60_40 = bench_60_40 * 100.0
-
-optimizer = PortfolioOptimizer(returns_df, risk_free_rate=0.030, annual_trading_days=248)
-cash_idx = valid_assets.index("MGS_3Y") if "MGS_3Y" in valid_assets else valid_assets.index("MGS_5Y") if "MGS_5Y" in valid_assets else None
-
-# Default: EPF Institutional Mandate (30% Offshore Cap, 5% Cash Buffer, 20% Single-Asset Cap)
-opt_res = optimizer.optimize_mean_variance(
-    objective="max_sharpe",
-    max_single_asset=0.20,
-    max_offshore=0.30,
-    offshore_mask=offshore_mask,
-    min_cash_buffer=0.05,
-    cash_index=cash_idx,
+alloc_model = c_ctl2.selectbox(
+    "Allocation Strategy",
+    ["Max Sharpe (MVO)", "Minimum Volatility", "Risk Parity (ERC)", "Black-Litterman"],
+    index=0,
 )
+
+benchmark_choice = c_ctl3.selectbox(
+    "Benchmark Overlay",
+    ["^GSPC", "^KLSE", "^N225", "^NDX"],
+    index=0,
+    help="Global equity benchmark for relative alpha/beta evaluation.",
+)
+
+rebal_freq = c_ctl4.selectbox(
+    "Rebalancing Frequency",
+    ["Monthly", "Quarterly", "Annual"],
+    index=0,
+)
+
+# Load data
+prices_df, is_demo = get_cached_universe_prices(
+    start_date="2020-01-01",
+    end_date="2024-12-31",
+    base_currency=base_curr,
+)
+
+registry = load_universe_registry()
+tradable_symbols = get_tradable_tickers(registry)
+available_tradable = [s for s in tradable_symbols if s in prices_df.columns]
+
+if len(available_tradable) < 3:
+    st.error("Insufficient tradable asset history loaded. Please verify data stream.")
+    st.stop()
+
+# Returns
+tradable_prices = prices_df[available_tradable]
+returns_df = tradable_prices.pct_change().dropna()
+
+# Benchmark series
+bench_series = prices_df[benchmark_choice] if benchmark_choice in prices_df.columns else prices_df.iloc[:, 0]
+
+# Optimize portfolio
+optimizer = PortfolioOptimizer(returns_df, risk_free_rate=0.040, registry=registry, filter_tradable=False)
+
+if alloc_model == "Max Sharpe (MVO)":
+    opt_res = optimizer.optimize_mean_variance(objective="max_sharpe", max_single_asset=0.25)
+elif alloc_model == "Minimum Volatility":
+    opt_res = optimizer.optimize_mean_variance(objective="min_volatility", max_single_asset=0.25)
+elif alloc_model == "Risk Parity (ERC)":
+    opt_res = optimizer.optimize_risk_parity(mode="asset_level")
+else: # Black-Litterman
+    views = [
+        {"asset_long": "NVDA", "asset_short": "7203.T", "relative_return": 0.04, "confidence": 0.70},
+        {"asset_long": "1155.KL", "view_return": 0.08, "confidence": 0.65},
+        {"asset_long": "GC=F", "view_return": 0.07, "confidence": 0.60},
+    ]
+    opt_res = optimizer.optimize_black_litterman(views_list=views, max_single_asset=0.25)
+
 weights = opt_res["weights"]
+assets = opt_res["assets"]
 
-backtester = PortfolioBacktester(valid_prices, benchmark_prices=bench_60_40, initial_capital=100_000.0)
-equity_df, kpis = backtester.run_rebalancing_backtest(weights, frequency=rebal_freq)
+# Run backtest
+backtester = PortfolioBacktester(
+    prices_df=tradable_prices[assets],
+    benchmark_prices=bench_series,
+    annual_trading_days=252,
+    initial_capital=100_000.0,
+)
 
-# Top KPI Metric Cards
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric("Compound Annual Growth", f"{kpis['CAGR']*100:.2f}%")
-c2.metric("Annualized Volatility", f"{kpis['Annualized_Volatility']*100:.2f}%")
-c3.metric("Net Sharpe Ratio", f"{kpis['Sharpe_Ratio']:.2f}")
-c4.metric("Sortino Ratio", f"{kpis['Sortino_Ratio']:.2f}")
-c5.metric("Max Peak-to-Trough DD", f"{kpis['Max_Drawdown']*100:.2f}%")
-c6.metric("Tracking Error", f"{kpis['Tracking_Error']*100:.2f}%", "vs Domestic 60/40")
+equity_df, summary = backtester.run_rebalancing_backtest(weights=weights, frequency=rebal_freq)
 
-# Regulatory Mandate Compliance Status Box
-st.markdown('<div style="margin-top: 15px;">', unsafe_allow_html=True)
-offshore_tot = sum(weights[i] for i, off in enumerate(offshore_mask) if off)
-cash_alloc = weights[cash_idx] if cash_idx is not None else 0.0
-max_asset_alloc = float(np.max(weights))
-max_asset_name = valid_assets[int(np.argmax(weights))]
+# Top KPI Scorecard
+st.markdown("#### 📊 Key Performance Indicators (Friction-Adjusted)")
+k1, k2, k3, k4, k5, k6 = st.columns(6)
 
-rc1, rc2, rc3, rc4 = st.columns(4)
-rc1.success(f"✓ EPF Offshore Cap: {offshore_tot*100:.1f}% (Limit $\\le 30.0\\%$)")
-rc2.success(f"✓ Cash Buffer: {cash_alloc*100:.1f}% (Floor $\\ge 5.0\\%$)")
-rc3.success(f"✓ Single Asset Cap: {max_asset_alloc*100:.1f}% in {max_asset_name} (Limit $\\le 20.0\\%$)")
-rc4.info(f"Friction Accounting: RM {kpis['Total_Fees_Paid']:,.2f} Paid")
+currency_sym = "$" if base_curr == "USD" else "RM " if base_curr == "MYR" else ""
+k1.metric("CAGR", f"{summary['cagr']:.2%}", f"vs {summary['benchmark_cagr']:.2%} Bench")
+k2.metric("Annual Volatility", f"{summary['annualized_volatility']:.2%}")
+k3.metric("Sharpe Ratio", f"{summary['sharpe_ratio']:.2f}")
+k4.metric("Sortino Ratio", f"{summary['sortino_ratio']:.2f}")
+k5.metric("Max Drawdown", f"{summary['max_drawdown']:.2%}", delta_color="inverse")
+k6.metric("Calmar Ratio", f"{summary['calmar_ratio']:.2f}")
 
-# Optimal Asset Allocation Breakdown Table & Donut
-st.markdown("### 📊 Optimal Asset Allocation Breakdown")
-tab1, tab2 = st.columns([6, 4])
+st.markdown("---")
 
-with tab1:
-    table_rows = []
-    for i, sym in enumerate(valid_assets):
-        w = weights[i]
-        if w >= 0.001:
-            meta = asset_metadata[sym]
-            table_rows.append({
-                "Asset Symbol": sym,
-                "Asset Description": meta["name"],
-                "Asset Class": meta["class"],
-                "Domicile": "Offshore (USD)" if meta["is_offshore"] else "Domestic (MYR)",
-                "Weight": w,
-            })
-    weights_display_df = pd.DataFrame(table_rows).sort_values("Weight", ascending=False)
-    st.dataframe(
-        weights_display_df.style.format({"Weight": "{:.2%}"}),
-        use_container_width=True,
-        hide_index=True,
+# Visual Layout: Equity Curve (60%) beside Allocation Donut (40%)
+c_left, c_right = st.columns([6, 4])
+
+with c_left:
+    st.markdown(f"#### 📈 Growth of {currency_sym}100,000 Portfolio vs {benchmark_choice}")
+
+    fig_equity = go.Figure()
+    fig_equity.add_trace(
+        go.Scatter(
+            x=equity_df.index,
+            y=equity_df["NAV"],
+            name=f"Portfolio NAV ({alloc_model})",
+            line=dict(color="#00c805", width=2.5),
+            hovertemplate=f"{currency_sym}%{{y:,.2f}}<extra></extra>",
+        )
+    )
+    fig_equity.add_trace(
+        go.Scatter(
+            x=equity_df.index,
+            y=equity_df["Benchmark_NAV"],
+            name=f"Benchmark ({benchmark_choice})",
+            line=dict(color="#64748b", width=1.5, dash="dot"),
+            hovertemplate=f"{currency_sym}%{{y:,.2f}}<extra></extra>",
+        )
     )
 
-with tab2:
-    donut_fig = go.Figure(
-        data=[
-            go.Pie(
-                labels=[r["Asset Description"][:20] for r in table_rows],
-                values=[r["Weight"] for r in table_rows],
-                hole=0.6,
-                hovertemplate="<b>%{label}</b><br>Weight: %{percent:.1%}<extra></extra>",
-            )
-        ]
-    )
-    donut_fig.update_layout(
+    fig_equity.update_layout(
         template="plotly_dark",
-        height=320,
-        margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="#0e1117",
         paper_bgcolor="#0e1117",
+        plot_bgcolor="#131722",
+        margin=dict(l=10, r=10, t=10, b=10),
+        height=380,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        xaxis=dict(showgrid=True, gridcolor="#2a2e39"),
+        yaxis=dict(showgrid=True, gridcolor="#2a2e39"),
+    )
+    st.plotly_chart(fig_equity, use_container_width=True, config={"displayModeBar": False, "responsive": True})
+
+with c_right:
+    st.markdown("#### 🍩 Optimal Asset Allocation")
+
+    w_df = pd.DataFrame({"Asset": assets, "Weight": weights})
+    w_df = w_df[w_df["Weight"] >= 0.01].sort_values("Weight", ascending=False)
+    w_df["Name"] = [registry.get(a, {}).get("name", a) for a in w_df["Asset"]]
+    w_df["Region"] = [registry.get(a, {}).get("region", "OTHER") for a in w_df["Asset"]]
+
+    fig_donut = px.pie(
+        w_df,
+        values="Weight",
+        names="Name",
+        hole=0.55,
+        color_discrete_sequence=px.colors.qualitative.Dark24,
+    )
+    fig_donut.update_traces(
+        textposition="inside",
+        textinfo="percent+label",
+        hovertemplate="%{label}: %{percent:.1%}<extra></extra>",
+    )
+    fig_donut.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#131722",
+        margin=dict(l=10, r=10, t=10, b=10),
+        height=380,
         showlegend=False,
     )
-    st.plotly_chart(donut_fig, use_container_width=True, config={"displayModeBar": False, "responsive": True})
+    st.plotly_chart(fig_donut, use_container_width=True, config={"displayModeBar": False, "responsive": True})
 
-# Monthly Returns Heatmap
-st.markdown("### 🗓️ Monthly Returns Matrix (%)")
-daily_ret = equity_df["Daily_Net_Return"].copy()
-monthly_ret = daily_ret.resample("ME").apply(lambda r: (1.0 + r).prod() - 1.0) * 100.0
+st.markdown("---")
 
-heatmap_df = pd.DataFrame({
-    "Year": monthly_ret.index.year,
-    "Month": monthly_ret.index.strftime("%b"),
-    "Return": monthly_ret.values,
-})
-pivot_table = heatmap_df.pivot_table(index="Year", columns="Month", values="Return")
-month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-existing_months = [m for m in month_order if m in pivot_table.columns]
-pivot_table = pivot_table[existing_months]
+# Allocation Breakdown Table & Regional Exposure
+c_tab1, c_tab2 = st.columns([6, 4])
 
-st.dataframe(pivot_table.style.format("{:+.2f}%").background_gradient(cmap="RdYlGn", axis=None, vmin=-6, vmax=6), use_container_width=True)
+with c_tab1:
+    st.markdown("#### 📑 Position Weights & Region Segregation")
+    w_table = []
+    for a, w in zip(assets, weights):
+        meta = registry.get(a, {})
+        w_table.append({
+            "Ticker": a,
+            "Name": meta.get("name", a),
+            "Region": meta.get("region", "OTHER"),
+            "Role": meta.get("role", "equity"),
+            "Weight": f"{w:.2%}",
+            "Value Allocation": f"{currency_sym}{w * summary['ending_nav']:,.2f}",
+        })
+    st.dataframe(pd.DataFrame(w_table).sort_values("Weight", ascending=False), use_container_width=True, hide_index=True)
+
+with c_tab2:
+    st.markdown("#### 🗺️ Regional & Sector Concentration")
+    reg_alloc = {}
+    for a, w in zip(assets, weights):
+        meta = registry.get(a, {})
+        reg = meta.get("region", "GLOBAL")
+        if meta.get("asset_class") == "commodity":
+            reg = "COMMODITY"
+        reg_alloc[reg] = reg_alloc.get(reg, 0.0) + w
+
+    reg_df = pd.DataFrame([{"Bucket": k, "Weight": v} for k, v in reg_alloc.items()])
+    fig_bar = px.bar(
+        reg_df,
+        x="Weight",
+        y="Bucket",
+        orientation="h",
+        color="Bucket",
+        color_discrete_sequence=["#00c805", "#3b82f6", "#ec4899", "#f59e0b"],
+    )
+    fig_bar.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#131722",
+        margin=dict(l=10, r=10, t=10, b=10),
+        height=260,
+        showlegend=False,
+        xaxis=dict(tickformat=".0%"),
+    )
+    st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar": False, "responsive": True})

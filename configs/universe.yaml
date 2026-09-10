@@ -1,98 +1,49 @@
-# Multi-Asset Quantitative Universe Configuration
-# Covers domestic Bursa Malaysia, global offshore equities, sovereign fixed income, commodities, and FX.
+base_currency: "USD" # Configurable base currency: USD or MYR
 
-base_currency: "MYR"
-domestic_market: "MY"
+universe:
+  malaysia:
+    region: "MY"
+    local_currency: "MYR"
+    fx_rate_ticker: "USDMYR=X"
+    instruments:
+      - { name: "KLCI", ticker: "^KLSE", role: "benchmark", asset_class: "index" }
+      - { name: "Maybank", ticker: "1155.KL", role: "equity", asset_class: "equity" }
+      - { name: "Public Bank", ticker: "1295.KL", role: "equity", asset_class: "equity" }
+      - { name: "CIMB", ticker: "1023.KL", role: "equity", asset_class: "equity" }
+      - { name: "Tenaga Nasional", ticker: "5347.KL", role: "equity", asset_class: "equity" }
+      - { name: "Press Metal", ticker: "8869.KL", role: "equity", asset_class: "equity" }
+      - { name: "YTL Power", ticker: "6742.KL", role: "equity", asset_class: "equity" }
+      - { name: "USD/MYR", ticker: "USDMYR=X", role: "macro", asset_class: "fx" }
 
-benchmarks:
-  equity_domestic: "^KLSE"          # FTSE Bursa Malaysia KLCI
-  equity_global: "SPY"             # S&P 500 ETF Trust
-  balanced_domestic: "60_40_MGS"   # 60% ^KLSE + 40% MGS 10Y
+  united_states:
+    region: "US"
+    local_currency: "USD"
+    instruments:
+      - { name: "S&P 500", ticker: "^GSPC", role: "benchmark", asset_class: "index" }
+      - { name: "Nasdaq-100", ticker: "^NDX", role: "benchmark", asset_class: "index" }
+      - { name: "Russell 2000", ticker: "^RUT", role: "benchmark", asset_class: "index" }
+      - { name: "Apple", ticker: "AAPL", role: "equity", asset_class: "equity" }
+      - { name: "Nvidia", ticker: "NVDA", role: "equity", asset_class: "equity" }
+      - { name: "JPMorgan", ticker: "JPM", role: "equity", asset_class: "equity" }
+      - { name: "QQQ", ticker: "QQQ", role: "tradable_proxy", asset_class: "etf" }
 
-asset_classes:
-  - id: "domestic_equity"
-    name: "Malaysian Equities (Bursa)"
-    domicile: "domestic"
-    assets:
-      - symbol: "1155.KL"
-        name: "Malayan Banking Berhad (Maybank)"
-        sector: "Financials"
-        weight_mkt: 0.18
-      - symbol: "1023.KL"
-        name: "CIMB Group Holdings Berhad"
-        sector: "Financials"
-        weight_mkt: 0.12
-      - symbol: "1295.KL"
-        name: "Public Bank Berhad"
-        sector: "Financials"
-        weight_mkt: 0.12
-      - symbol: "5347.KL"
-        name: "Tenaga Nasional Berhad"
-        sector: "Utilities"
-        weight_mkt: 0.10
-      - symbol: "5183.KL"
-        name: "Petronas Chemicals Group Berhad"
-        sector: "Materials"
-        weight_mkt: 0.08
-      - symbol: "6742.KL"
-        name: "YTL Power International Berhad"
-        sector: "Utilities"
-        weight_mkt: 0.06
+  japan:
+    region: "JP"
+    local_currency: "JPY"
+    fx_rate_ticker: "JPY=X"
+    instruments:
+      - { name: "Nikkei 225", ticker: "^N225", role: "benchmark", asset_class: "index" }
+      - { name: "TOPIX", ticker: "^TOPX", role: "benchmark", asset_class: "index" }
+      - { name: "Toyota", ticker: "7203.T", role: "equity", asset_class: "equity" }
+      - { name: "USD/JPY", ticker: "JPY=X", role: "macro", asset_class: "fx" }
 
-  - id: "offshore_equity"
-    name: "Global & Offshore Equities"
-    domicile: "offshore"
-    assets:
-      - symbol: "SPY"
-        name: "SPDR S&P 500 ETF Trust"
-        sector: "US Broad Market"
-        weight_mkt: 0.14
-      - symbol: "QQQ"
-        name: "Invesco QQQ Trust (Nasdaq 100)"
-        sector: "US Technology"
-        weight_mkt: 0.08
-      - symbol: "EEM"
-        name: "iShares MSCI Emerging Markets ETF"
-        sector: "Emerging Markets"
-        weight_mkt: 0.04
-      - symbol: "ACWI"
-        name: "iShares MSCI ACWI ETF"
-        sector: "Global All-Country"
-        weight_mkt: 0.08
-
-  - id: "fixed_income"
-    name: "Sovereign Fixed Income"
-    domicile: "mixed"
-    assets:
-      - symbol: "MGS_10Y"
-        name: "Malaysian Government Securities 10Y Benchmark"
-        domicile: "domestic"
-        sector: "Sovereign Debt"
-        weight_mkt: 0.20
-      - symbol: "MGS_5Y"
-        name: "Malaysian Government Securities 5Y Benchmark"
-        domicile: "domestic"
-        sector: "Sovereign Debt"
-        weight_mkt: 0.10
-      - symbol: "US_10Y"
-        name: "US 10-Year Treasury Yield Proxy"
-        domicile: "offshore"
-        sector: "US Sovereign"
-        weight_mkt: 0.10
-
-  - id: "commodities_fx"
-    name: "Commodities & Foreign Exchange"
-    domicile: "offshore"
-    assets:
-      - symbol: "GC=F"
-        name: "Gold Futures (COMEX / USD)"
-        sector: "Precious Metals"
-        weight_mkt: 0.05
-      - symbol: "CL=F"
-        name: "Crude Oil WTI Futures"
-        sector: "Energy"
-        weight_mkt: 0.05
-      - symbol: "MYR=X"
-        name: "USD/MYR Spot Exchange Rate"
-        sector: "FX Currency"
-        weight_mkt: 0.00
+  cross_market_macro:
+    region: "GLOBAL"
+    local_currency: "USD"
+    instruments:
+      - { name: "Gold", ticker: "GC=F", role: "commodity", asset_class: "commodity" }
+      - { name: "Brent Crude", ticker: "BZ=F", role: "commodity", asset_class: "commodity" }
+      - { name: "Copper", ticker: "HG=F", role: "commodity", asset_class: "commodity" }
+      - { name: "DXY", ticker: "DX-Y.NYB", role: "macro", asset_class: "fx_index" }
+      - { name: "VIX", ticker: "^VIX", role: "volatility", asset_class: "risk_indicator" }
+      - { name: "US 10Y Yield", ticker: "^TNX", role: "rates", asset_class: "rates" }

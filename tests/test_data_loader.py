@@ -1,37 +1,38 @@
-"""Unit tests for multi-asset data loader, MGS pipeline, and Parquet caching."""
+"""Unit tests for Multi-Market 25-instrument data loader, caching, and fallback."""
 
 import pandas as pd
 from data.loader import (
-    load_multi_asset_dataset,
-    load_mgs_fixed_income,
-    generate_deterministic_synthetic_prices,
+    load_universe_prices,
+    get_all_universe_tickers,
+    generate_deterministic_multi_market_prices,
     _hash_cache_key,
 )
 
 
-def test_mgs_fixed_income_loading():
-    df = load_mgs_fixed_income()
-    assert not df.empty
-    assert "MGS_10Y" in df.columns
-    assert "BNM_OPR" in df.columns
-    assert df["MGS_10Y"].mean() > 2.0
-    assert df["BNM_OPR"].mean() >= 1.5
+def test_universe_tickers_count():
+    tickers = get_all_universe_tickers()
+    assert len(tickers) == 25
+    assert "^KLSE" in tickers
+    assert "^GSPC" in tickers
+    assert "^N225" in tickers
+    assert "GC=F" in tickers
 
 
-def test_deterministic_synthetic_generation():
-    syms = ["1155.KL", "SPY", "MGS_10Y", "MYR=X"]
-    df = generate_deterministic_synthetic_prices(syms, "2020-01-01", "2021-12-31")
-    assert df.shape[1] == 4
+def test_deterministic_multi_market_prices_generation():
+    tickers = ["1155.KL", "AAPL", "7203.T", "GC=F", "^VIX", "^TNX"]
+    df = generate_deterministic_multi_market_prices(tickers, "2021-01-01", "2021-12-31")
+    assert df.shape[1] == 6
     assert not df.isna().any().any()
     # Prices must be strictly positive
     assert (df > 0).all().all()
 
 
-def test_parquet_caching_lifecycle():
-    syms = ["1155.KL", "MGS_10Y"]
-    df1, is_demo1 = load_multi_asset_dataset(syms, "2021-01-01", "2021-06-30", force_offline=True)
+def test_universe_prices_loading_and_parquet_caching():
+    tickers = ["1155.KL", "AAPL", "7203.T", "^VIX"]
+    df1, is_demo1 = load_universe_prices(tickers, "2021-01-01", "2021-06-30", force_offline=True)
     assert not df1.empty
+    assert set(tickers).issubset(set(df1.columns))
 
     # Re-call should load cached data without issue
-    df2, is_demo2 = load_multi_asset_dataset(syms, "2021-01-01", "2021-06-30", force_offline=True)
+    df2, is_demo2 = load_universe_prices(tickers, "2021-01-01", "2021-06-30", force_offline=True)
     assert df1.equals(df2)

@@ -1,350 +1,244 @@
-"""Institutional Multi-Asset Portfolio Allocation & Systematic Research Workstation.
+"""Global Router & System Overview Terminal (`systematic-research-engine`).
 
-Global dashboard entry point and executive workstation overview.
-Adheres strictly to zero-cost, open-access financial data architecture.
+Modern programmatic multi-page navigation router using st.navigation.
+Displays system health, universe registry audit across 25 instruments,
+and configuration cache controls.
 """
 
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta
 
-# Add root directory to sys.path
 _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import streamlit as st
-import numpy as np
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 import yaml
 
-from data.loader import get_cached_multi_asset_data
-from research.optimization import PortfolioOptimizer
-from research.risk import RiskEngine
-from experiments.backtester import PortfolioBacktester
+from data.aligner import load_universe_registry, get_tradable_tickers
+from data.loader import get_cached_universe_prices, get_all_universe_tickers
 
-# Page Configuration
-st.set_page_config(
-    page_title="Institutional Multi-Asset Terminal",
-    page_icon="🏛️",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# Load Universe & Risk Configurations
-@st.cache_data(ttl=3600)
-def load_app_configs():
-    with open(_ROOT / "configs" / "universe.yaml", "r", encoding="utf-8") as f:
-        u_cfg = yaml.safe_load(f)
-    with open(_ROOT / "configs" / "risk_limits.yaml", "r", encoding="utf-8") as f:
-        r_cfg = yaml.safe_load(f)
-    return u_cfg, r_cfg
+# Global Terminal Page Configuration
+try:
+    st.set_page_config(
+        page_title="Multi-Market Universe Engine",
+        page_icon="🏛️",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+except Exception:
+    pass
 
 
-universe_cfg, risk_cfg = load_app_configs()
+def render_overview():
+    """Render Terminal Status and Universe Health Check."""
+    registry = load_universe_registry()
+    tradable_symbols = get_tradable_tickers(registry)
 
-# Flatten default asset universe
-core_symbols = []
-offshore_flags = []
-asset_metadata = {}
+    # Sidebar global parameters
+    st.sidebar.markdown("### ⚙️ Engine Environment")
+    base_curr = st.sidebar.selectbox(
+        "Base Currency Alignment",
+        ["USD", "MYR", "LOCAL"],
+        index=0,
+        help="Normalizes multi-market assets into a common denomination.",
+    )
+    st.session_state["base_currency"] = base_curr
 
-for ac in universe_cfg.get("asset_classes", []):
-    domicile = ac.get("domicile", "domestic")
-    for a in ac.get("assets", []):
-        sym = a["symbol"]
-        if sym not in core_symbols:
-            core_symbols.append(sym)
-            is_offshore = (domicile == "offshore") or (a.get("domicile") == "offshore")
-            offshore_flags.append(is_offshore)
-            asset_metadata[sym] = {
-                "name": a.get("name", sym),
-                "sector": a.get("sector", "General"),
-                "class": ac.get("name", "Other"),
-                "is_offshore": is_offshore,
-                "weight_mkt": a.get("weight_mkt", 0.05),
-            }
+    col_s1, col_s2 = st.sidebar.columns(2)
+    start_d = col_s1.date_input("Start Date", datetime(2021, 1, 1))
+    end_d = col_s2.date_input("End Date", datetime(2024, 12, 31))
 
-# Terminal Header Banner
-st.markdown(
-    """
-    <div style="background-color: #131722; border: 1px solid #2a2e39; border-left: 5px solid #00c805;
-                padding: 16px 20px; border-radius: 4px; margin-bottom: 20px;">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <span style="font-size: 11px; font-weight: 800; color: #00c805; letter-spacing: 1.5px; text-transform: uppercase;">
-                    INSTITUTIONAL QUANTITATIVE WORKSTATION • FACTSET / BLOOMBERG ERGONOMICS
-                </span>
-                <h2 style="margin: 4px 0 0 0; color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">
-                    Malaysian Multi-Asset Risk & Allocation Terminal
-                </h2>
-            </div>
-            <div style="text-align: right;">
-                <span style="background-color: #1e2433; color: #00e5ff; font-size: 11px; font-weight: 700;
-                             padding: 5px 10px; border-radius: 3px; border: 1px solid #2d3748;">
-                    ● ZERO-COST DATA ARCHITECTURE (NO PAID APIS)
-                </span>
-                <div style="color: #94a3b8; font-size: 11px; margin-top: 5px; font-family: monospace;">
-                    BASE CURRENCY: MYR • STATUTORY FRICTIONS MODELED
+    st.session_state["start_date"] = str(start_d)
+    st.session_state["end_date"] = str(end_d)
+
+    if st.sidebar.button("🧹 Invalidate Data Cache", use_container_width=True):
+        st.cache_data.clear()
+        st.sidebar.success("Parquet cache invalidated!")
+
+    # Load Universe
+    prices_df, is_demo = get_cached_universe_prices(
+        start_date=str(start_d),
+        end_date=str(end_d),
+        base_currency=base_curr,
+    )
+
+    # Header Banner
+    demo_badge = (
+        "<span style='background:#f59e0b;color:#000;font-size:11px;font-weight:700;padding:2px 8px;border-radius:3px;'>OFFLINE DEMO MODE</span>"
+        if is_demo
+        else "<span style='background:#00c805;color:#000;font-size:11px;font-weight:700;padding:2px 8px;border-radius:3px;'>LIVE YFINANCE STREAM</span>"
+    )
+
+    st.markdown(
+        f"""
+        <div style="background-color: #131722; border: 1px solid #2a2e39; border-left: 5px solid #00c805;
+                    padding: 16px 20px; border-radius: 4px; margin-bottom: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <span style="font-size: 11px; font-weight: 800; color: #00c805; letter-spacing: 1.5px; text-transform: uppercase;">
+                        INSTITUTIONAL QUANTITATIVE WORKSTATION • MULTI-MARKET UNIVERSE ENGINE
+                    </span>
+                    <h2 style="margin: 4px 0 0 0; color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">
+                        Global 25-Instrument Systematic Research Terminal
+                    </h2>
+                </div>
+                <div style="text-align: right;">
+                    {demo_badge}
+                    <div style="color: #848e9c; font-size: 11px; font-family: monospace; margin-top: 4px;">
+                        BASE: {base_curr} • 25 ASSETS MONITORED
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-# Sidebar Institutional Controls
-st.sidebar.markdown("### ⚙️ Allocation Mandates & Controls")
-
-preset = st.sidebar.selectbox(
-    "Strategy Allocation Preset",
-    [
-        "EPF Institutional Balanced (30% Max Offshore, 5% Cash)",
-        "Maximum Sharpe Ratio (Unconstrained)",
-        "Minimum Volatility (Capital Preservation)",
-        "Black-Litterman Active Views (Overweight Bursa & Tech)",
-        "Equal Weight Baseline (1/N)",
-    ],
-    index=0,
-)
-
-lookback_choice = st.sidebar.selectbox("Estimation Lookback Window", ["1 Year (252d)", "2 Years (504d)", "3 Years (756d)"], index=1)
-lookback_days = 252 if "1" in lookback_choice else 756 if "3" in lookback_choice else 504
-
-base_curr = st.sidebar.radio("Base Accounting Currency", ["MYR", "USD"], index=0, horizontal=True)
-rebal_freq = st.sidebar.selectbox("Rebalancing Frequency", ["Monthly", "Quarterly", "Annual"], index=0)
-force_offline = st.sidebar.checkbox("Force Offline Mode (Deterministic Demo)", value=False)
-
-# Date calculations
-end_dt = datetime.now()
-start_dt = end_dt - timedelta(days=int(lookback_days * 1.55))
-start_str = start_dt.strftime("%Y-%m-%d")
-end_str = end_dt.strftime("%Y-%m-%d")
-
-# Load Pricing Dataset
-with st.spinner("Synchronizing multi-asset datasets via free public endpoints..."):
-    prices_df, is_demo = get_cached_multi_asset_data(
-        core_symbols,
-        start_date=start_str,
-        end_date=end_str,
-        base_currency=base_curr,
-        force_offline=force_offline,
+        """,
+        unsafe_allow_html=True,
     )
 
-if prices_df.empty:
-    st.error("Unable to load price series. Toggle 'Force Offline Mode' in the sidebar to use local synthetic fallback.")
-    st.stop()
+    # Top Key Macro Gauges
+    st.markdown("#### 🌐 Real-Time Macro & Volatility Indicators")
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
 
-# Align assets present
-valid_assets = [s for s in core_symbols if s in prices_df.columns]
-valid_prices = prices_df[valid_assets].dropna()
-returns_df = valid_prices.pct_change().dropna()
-offshore_mask = [asset_metadata[s]["is_offshore"] for s in valid_assets]
+    def get_latest_val(sym):
+        if sym in prices_df.columns:
+            return float(prices_df[sym].iloc[-1])
+        return 0.0
 
-# Compute Benchmark: Domestic 60/40 (^KLSE + MGS 10Y)
-bench_equity = valid_prices["^KLSE"] if "^KLSE" in valid_prices.columns else valid_prices.iloc[:, 0]
-bench_bond = valid_prices["MGS_10Y"] if "MGS_10Y" in valid_prices.columns else valid_prices.iloc[:, -1]
-bench_60_40_series = 0.60 * (bench_equity / bench_equity.iloc[0]) + 0.40 * (bench_bond / bench_bond.iloc[0])
-bench_60_40_series = bench_60_40_series * 100.0
+    def get_latest_pct(sym):
+        if sym in prices_df.columns and len(prices_df) >= 2:
+            return float((prices_df[sym].iloc[-1] / prices_df[sym].iloc[-2] - 1.0) * 100.0)
+        return 0.0
 
-# Initialize Quantitative Optimizer
-optimizer = PortfolioOptimizer(returns_df, risk_free_rate=0.030, annual_trading_days=248)
+    vix_val = get_latest_val("^VIX")
+    vix_chg = get_latest_pct("^VIX")
+    m1.metric("VIX Volatility", f"{vix_val:.2f}", f"{vix_chg:+.2f}%", delta_color="inverse")
 
-# Compute Weights based on Preset
-cash_idx = valid_assets.index("MGS_3Y") if "MGS_3Y" in valid_assets else valid_assets.index("MGS_5Y") if "MGS_5Y" in valid_assets else None
+    tnx_val = get_latest_val("^TNX")
+    tnx_chg = get_latest_pct("^TNX")
+    m2.metric("US 10Y Yield", f"{tnx_val:.2f}%", f"{tnx_chg:+.2f}%", delta_color="inverse")
 
-if "Equal Weight" in preset:
-    opt_weights = np.ones(len(valid_assets)) / len(valid_assets)
-elif "Min Volatility" in preset:
-    res = optimizer.optimize_mean_variance(
-        objective="min_volatility",
-        max_single_asset=0.25,
-        max_offshore=0.30,
-        offshore_mask=offshore_mask,
+    myr_val = get_latest_val("USDMYR=X")
+    myr_chg = get_latest_pct("USDMYR=X")
+    m3.metric("USD/MYR", f"{myr_val:.4f}", f"{myr_chg:+.2f}%")
+
+    jpy_val = get_latest_val("JPY=X")
+    jpy_chg = get_latest_pct("JPY=X")
+    m4.metric("USD/JPY", f"{jpy_val:.2f}", f"{jpy_chg:+.2f}%")
+
+    gold_val = get_latest_val("GC=F")
+    gold_chg = get_latest_pct("GC=F")
+    m5.metric("Gold (GC=F)", f"${gold_val:,.1f}", f"{gold_chg:+.2f}%")
+
+    brent_val = get_latest_val("BZ=F")
+    brent_chg = get_latest_pct("BZ=F")
+    m6.metric("Brent Crude (BZ=F)", f"${brent_val:.2f}", f"{brent_chg:+.2f}%")
+
+    st.markdown("---")
+
+    # 25-Instrument Registry Audit
+    st.markdown("#### 📋 25-Instrument Universe Registry & Data Health")
+    c_reg1, c_reg2, c_reg3, c_reg4 = st.columns(4)
+    c_reg1.metric("Total Instruments", "25", "4 Regional Buckets")
+    c_reg2.metric("Tradable Universe", f"{len(tradable_symbols)}", "Equities, ETFs, Commodities")
+    c_reg3.metric("Benchmark Overlays", "6", "KLCI, S&P, NDX, RUT, N225, TOPX")
+    c_reg4.metric("Macro / Rates / Vol", "5", "VIX, TNX, DXY, FX")
+
+    reg_records = []
+    for ticker, meta in registry.items():
+        has_data = ticker in prices_df.columns
+        last_price = prices_df[ticker].iloc[-1] if has_data else 0.0
+        tot_bars = len(prices_df[ticker].dropna()) if has_data else 0
+        reg_records.append({
+            "Ticker": ticker,
+            "Name": meta.get("name"),
+            "Region": meta.get("region"),
+            "Local Currency": meta.get("local_currency"),
+            "Role": meta.get("role"),
+            "Asset Class": meta.get("asset_class"),
+            "Tradable": "✅ Yes" if ticker in tradable_symbols else "ℹ️ Benchmark/Macro",
+            f"Latest Price ({base_curr})": f"{last_price:,.2f}",
+            "Coverage Bars": tot_bars,
+            "Health": "🟢 Healthy" if tot_bars > 50 else "🔴 Missing",
+        })
+
+    reg_df = pd.DataFrame(reg_records)
+    st.dataframe(
+        reg_df,
+        use_container_width=True,
+        hide_index=True,
+        height=380,
     )
-    opt_weights = res["weights"]
-elif "Black-Litterman" in preset:
-    mkt_weights = np.array([asset_metadata[s]["weight_mkt"] for s in valid_assets])
-    mkt_weights = mkt_weights / np.sum(mkt_weights)
-    views = {
-        "1155.KL": (0.09, 0.70),  # Maybank expected return 9% (70% confidence)
-        "SPY": (0.11, 0.65),      # S&P 500 expected return 11% (65% confidence)
-        "MGS_10Y": (0.042, 0.85), # MGS 10Y yield 4.2% (85% confidence)
+
+    # Quick Navigation Summary
+    st.markdown("#### 🧭 Analytical Subsystem Workstations")
+    nav1, nav2, nav3, nav4 = st.columns(4)
+    with nav1:
+        st.markdown(
+            """
+            <div style="background:#1a1c24;padding:16px;border-radius:6px;border-top:3px solid #00c805;">
+                <h4 style="margin:0 0 8px 0;color:#fff;">1. Executive Summary</h4>
+                <p style="color:#848e9c;font-size:12px;margin:0;">
+                    Consolidated KPI tearsheet, Sharpe, Sortino, Calmar, and asset allocation donut chart.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with nav2:
+        st.markdown(
+            """
+            <div style="background:#1a1c24;padding:16px;border-radius:6px;border-top:3px solid #3b82f6;">
+                <h4 style="margin:0 0 8px 0;color:#fff;">2. Factor Research</h4>
+                <p style="color:#848e9c;font-size:12px;margin:0;">
+                    25x25 correlation matrix heatmap, rolling betas against KLCI, S&P 500, Nikkei, and lead-lag analysis.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with nav3:
+        st.markdown(
+            """
+            <div style="background:#1a1c24;padding:16px;border-radius:6px;border-top:3px solid #ec4899;">
+                <h4 style="margin:0 0 8px 0;color:#fff;">3. Strategy Backtest</h4>
+                <p style="color:#848e9c;font-size:12px;margin:0;">
+                    In-sample vs out-of-sample walk-forward validation, rebalancing friction, and underwater drawdowns.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with nav4:
+        st.markdown(
+            """
+            <div style="background:#1a1c24;padding:16px;border-radius:6px;border-top:3px solid #f59e0b;">
+                <h4 style="margin:0 0 8px 0;color:#fff;">4. Risk Engine</h4>
+                <p style="color:#848e9c;font-size:12px;margin:0;">
+                    Non-Gaussian Cornish-Fisher mVaR/mCVaR, fat-tail QQ plots, and macro shock simulations.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+# Configure Navigation Pages
+pg = st.navigation(
+    {
+        "Overview": [
+            st.Page(render_overview, title="Terminal Status", icon=":material/speed:", default=True)
+        ],
+        "Quantitative Analytics": [
+            st.Page("pages/1_Executive_Summary.py", title="Executive Summary", icon=":material/analytics:"),
+            st.Page("pages/2_Factor_Research.py", title="Factor Research", icon=":material/hub:"),
+            st.Page("pages/3_Strategy_Backtest.py", title="Strategy Backtest", icon=":material/timeline:"),
+            st.Page("pages/4_Risk_Engine.py", title="Risk Engine", icon=":material/shield:"),
+        ],
     }
-    pi, post_er, post_cov = optimizer.compute_black_litterman(mkt_weights, views)
-    res = optimizer.optimize_mean_variance(
-        objective="max_sharpe",
-        max_single_asset=0.20,
-        max_offshore=0.30,
-        offshore_mask=offshore_mask,
-        expected_returns=post_er,
-        cov_matrix=post_cov,
-    )
-    opt_weights = res["weights"]
-elif "Unconstrained" in preset:
-    res = optimizer.optimize_mean_variance(objective="max_sharpe", max_single_asset=0.40, max_offshore=1.0)
-    opt_weights = res["weights"]
-else:
-    # EPF Institutional Balanced (Default)
-    res = optimizer.optimize_mean_variance(
-        objective="max_sharpe",
-        max_single_asset=0.20,
-        max_offshore=0.30,
-        offshore_mask=offshore_mask,
-        min_cash_buffer=0.05,
-        cash_index=cash_idx,
-    )
-    opt_weights = res["weights"]
-
-# Backtest Engine Execution
-backtester = PortfolioBacktester(valid_prices, benchmark_prices=bench_60_40_series, initial_capital=100_000.0)
-equity_df, kpis = backtester.run_rebalancing_backtest(opt_weights, frequency=rebal_freq)
-
-# Top KPI Scorecards
-st.markdown('<div style="margin-top: 5px; margin-bottom: 15px;">', unsafe_allow_html=True)
-k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
-
-k1.metric("CAGR", f"{kpis['CAGR']*100:.2f}%", "Annualized")
-k2.metric("Volatility", f"{kpis['Annualized_Volatility']*100:.2f}%", "Annualized")
-k3.metric("Sharpe Ratio", f"{kpis['Sharpe_Ratio']:.2f}", f"Rf = 3.0%")
-k4.metric("Sortino Ratio", f"{kpis['Sortino_Ratio']:.2f}", "Downside")
-k5.metric("Max Drawdown", f"{kpis['Max_Drawdown']*100:.2f}%", "Peak-to-Trough")
-k6.metric("Calmar Ratio", f"{kpis['Calmar_Ratio']:.2f}", "Return/DD")
-k7.metric("Tracking Error", f"{kpis['Tracking_Error']*100:.2f}%", "vs Domestic 60/40")
-st.markdown('</div>', unsafe_allow_html=True)
-
-# Main Institutional Visual Layout: Cumulative Wealth Chart (60%) beside Allocation Donut (40%)
-c_left, c_right = st.columns([6, 4])
-
-with c_left:
-    st.markdown(
-        """
-        <div style="font-size: 13px; font-weight: 700; color: #e0e0e0; margin-bottom: 8px; text-transform: uppercase;">
-            Cumulative Wealth Trajectory (Growth of RM 100,000)
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    
-    growth_fig = go.Figure()
-    growth_fig.add_trace(
-        go.Scatter(
-            x=equity_df.index,
-            y=equity_df["NAV"] * 100_000.0,
-            mode="lines",
-            name="Allocated Portfolio (Net of All Frictions)",
-            line=dict(color="#00c805", width=2.5),
-            hovertemplate="Allocated Portfolio: <b>RM %{y:,.2f}</b><extra></extra>",
-        )
-    )
-    growth_fig.add_trace(
-        go.Scatter(
-            x=equity_df.index,
-            y=equity_df["Benchmark_NAV"] * 100_000.0,
-            mode="lines",
-            name="Domestic 60/40 Benchmark (60% KLCI + 40% MGS 10Y)",
-            line=dict(color="#38bdf8", width=1.5, dash="dash"),
-            hovertemplate="Domestic 60/40 Benchmark: <b>RM %{y:,.2f}</b><extra></extra>",
-        )
-    )
-    if "^KLSE" in valid_prices.columns:
-        klci_norm = (valid_prices["^KLSE"] / valid_prices["^KLSE"].iloc[0]) * 100_000.0
-        growth_fig.add_trace(
-            go.Scatter(
-                x=valid_prices.index,
-                y=klci_norm,
-                mode="lines",
-                name="Bursa KLCI Equity Index (^KLSE)",
-                line=dict(color="#64748b", width=1, dash="dot"),
-                hovertemplate="Bursa KLCI: <b>RM %{y:,.2f}</b><extra></extra>",
-            )
-        )
-
-    growth_fig.update_layout(
-        template="plotly_dark",
-        height=380,
-        margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="#0e1117",
-        paper_bgcolor="#0e1117",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        yaxis=dict(
-            title="Portfolio Value (RM)",
-            tickprefix="RM ",
-            gridcolor="#2a2e39",
-            zerolinecolor="#2a2e39",
-        ),
-        xaxis=dict(gridcolor="#2a2e39"),
-    )
-    st.plotly_chart(growth_fig, use_container_width=True, config={"displayModeBar": False, "responsive": True})
-
-with c_right:
-    offshore_total = sum(opt_weights[i] for i, off in enumerate(offshore_mask) if off)
-    badge_col = "#00c805" if offshore_total <= 0.301 else "#ff1744"
-    st.markdown(
-        f"""
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <span style="font-size: 13px; font-weight: 700; color: #e0e0e0; text-transform: uppercase;">
-                Optimal Asset Allocation
-            </span>
-            <span style="font-size: 11px; font-weight: 700; color: {badge_col}; font-family: monospace;">
-                OFFSHORE: {offshore_total*100:.1f}% / 30.0% LIMIT
-            </span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # Donut Chart
-    active_idx = [i for i, w in enumerate(opt_weights) if w >= 0.005]
-    donut_labels = [asset_metadata[valid_assets[i]]["name"][:22] for i in active_idx]
-    donut_values = [opt_weights[i] for i in active_idx]
-
-    donut_fig = go.Figure(
-        data=[
-            go.Pie(
-                labels=donut_labels,
-                values=donut_values,
-                hole=0.55,
-                textinfo="label+percent",
-                insidetextorientation="radial",
-                hovertemplate="<b>%{label}</b><br>Allocation: <b>%{percent:.1%}</b><extra></extra>",
-            )
-        ]
-    )
-    donut_fig.update_layout(
-        template="plotly_dark",
-        height=380,
-        margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="#0e1117",
-        paper_bgcolor="#0e1117",
-        showlegend=False,
-    )
-    st.plotly_chart(donut_fig, use_container_width=True, config={"displayModeBar": False, "responsive": True})
-
-# Navigation Callout to Multi-Page Modules
-st.markdown("---")
-st.markdown(
-    """
-    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
-        <div style="background-color: #131722; padding: 14px; border-radius: 4px; border: 1px solid #2a2e39;">
-            <div style="color: #00c805; font-weight: 700; font-size: 13px;">PAGE 1: EXECUTIVE TEARSHEET</div>
-            <div style="color: #94a3b8; font-size: 12px; margin-top: 4px;">Detailed weights ledger, monthly returns heatmap, and benchmark tracking.</div>
-        </div>
-        <div style="background-color: #131722; padding: 14px; border-radius: 4px; border: 1px solid #2a2e39;">
-            <div style="color: #38bdf8; font-weight: 700; font-size: 13px;">PAGE 2: FACTOR RESEARCH</div>
-            <div style="color: #94a3b8; font-size: 12px; margin-top: 4px;">Cross-asset correlation matrix, rolling beta, volatility, and dispersion.</div>
-        </div>
-        <div style="background-color: #131722; padding: 14px; border-radius: 4px; border: 1px solid #2a2e39;">
-            <div style="color: #ffab00; font-weight: 700; font-size: 13px;">PAGE 3: STRATEGY BACKTEST</div>
-            <div style="color: #94a3b8; font-size: 12px; margin-top: 4px;">Drawdown underwater analysis, turnover fees, and 4 historical crisis stress tests.</div>
-        </div>
-        <div style="background-color: #131722; padding: 14px; border-radius: 4px; border: 1px solid #2a2e39;">
-            <div style="color: #e040fb; font-weight: 700; font-size: 13px;">PAGE 4: RISK & TAIL ENGINE</div>
-            <div style="color: #94a3b8; font-size: 12px; margin-top: 4px;">Non-Gaussian Cornish-Fisher VaR/CVaR, fat-tail skewness, and risk contribution.</div>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
 )
+
+pg.run()

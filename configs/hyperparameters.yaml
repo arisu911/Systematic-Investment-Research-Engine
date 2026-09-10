@@ -1,4 +1,4 @@
-# Multi-Asset Quantitative Estimation & Optimization Hyperparameters
+# Multi-Market Estimation & Optimization Hyperparameters
 
 lookback_windows:
   default_days: 504         # 2 Years of daily trading bars
@@ -8,7 +8,7 @@ lookback_windows:
 
 rebalancing:
   default_frequency: "Monthly" # Monthly, Quarterly, Annual
-  trading_days_per_year: 248  # Bursa Malaysia standard trading days
+  trading_days_per_year: 252  # Standard international trading days
 
 monte_carlo:
   num_simulations: 10000
@@ -17,20 +17,27 @@ monte_carlo:
 
 black_litterman:
   tau: 0.05                  # Scale factor for covariance of prior
-  risk_aversion: 2.50        # Market implied risk aversion coefficient (lambda)
+  risk_aversion: 2.50        # Implied market risk aversion coefficient (lambda)
   default_views:
-    - asset: "1155.KL"
-      view_return: 0.08      # Outperform implied equilibrium by 8%
-      confidence: 0.65       # 65% subjective conviction
-    - asset: "SPY"
-      view_return: 0.10      # Global equity expected return 10%
+    - view_name: "US Tech Outperformance"
+      asset_long: "NVDA"
+      asset_short: "7203.T"
+      relative_return: 0.04   # US Tech outperforms Japan by 4%
+      confidence: 0.70
+    - view_name: "Malaysia Dividend Yield"
+      asset_long: "1155.KL"
+      view_return: 0.08      # Maybank expected return 8%
+      confidence: 0.65
+    - view_name: "Gold Inflation Hedge"
+      asset_long: "GC=F"
+      view_return: 0.07      # Gold expected return 7%
       confidence: 0.60
-    - asset: "MGS_10Y"
-      view_return: 0.042     # Sovereign bond yield 4.2%
-      confidence: 0.85
 
 optimization:
   solver: "SLSQP"
   max_iterations: 1000
   tolerance: 1e-7
-  risk_free_rate: 0.030      # 3.0% BNM OPR baseline proxy
+  risk_free_rate: 0.040      # 4.0% US short rate baseline
+  risk_parity:
+    method: "equal_risk_contribution" # asset_level or group_level
+    tolerance: 1e-8

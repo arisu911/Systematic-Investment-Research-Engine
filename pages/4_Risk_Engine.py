@@ -1,14 +1,17 @@
-"""Institutional Multi-Asset Portfolio - Risk & Non-Gaussian Tail Engine.
+"""Risk Engine: Non-Gaussian Tail Risk Modeling & Macro Shock Simulation Workstation.
 
-Implements Parametric, Historical, and Cornish-Fisher Modified VaR & CVaR (95% & 99%),
-sample skewness and excess kurtosis tail analytics, and asset Percentage Risk Contribution (PRC).
+Displays:
+1. VaR & CVaR Matrix: Parametric Gaussian vs Historical vs Cornish-Fisher Modified VaR/CVaR (95% & 99%).
+2. Empirical Fat-Tail Distribution with Cornish-Fisher Critical Cutoff Overlay.
+3. Quantile-Quantile (QQ) Diagnostic Plot exposing non-Gaussian excess kurtosis and skewness.
+4. Percentage Risk Contribution (PCR) Decomposition across assets.
+5. Interactive Macroeconomic Shock Simulator (VIX Doubling, US 10Y Spike, Oil Shock, Currency Surge).
 """
 
 import sys
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# Add root directory to sys.path
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -18,230 +21,243 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-from scipy.stats import norm
-import yaml
 
-from data.loader import get_cached_multi_asset_data
+from data.aligner import load_universe_registry, get_tradable_tickers
+from data.loader import get_cached_universe_prices
 from research.optimization import PortfolioOptimizer
 from research.risk import RiskEngine
+from experiments.stress_test import StressTestEngine
 
-st.set_page_config(page_title="Risk & Tail Engine", page_icon="🛡️", layout="wide")
-
-with open(_ROOT / "configs" / "universe.yaml", "r", encoding="utf-8") as f:
-    u_cfg = yaml.safe_load(f)
-
-core_symbols = []
-offshore_flags = []
-asset_metadata = {}
-
-for ac in u_cfg.get("asset_classes", []):
-    domicile = ac.get("domicile", "domestic")
-    for a in ac.get("assets", []):
-        sym = a["symbol"]
-        if sym not in core_symbols:
-            core_symbols.append(sym)
-            is_offshore = (domicile == "offshore") or (a.get("domicile") == "offshore")
-            offshore_flags.append(is_offshore)
-            asset_metadata[sym] = {
-                "name": a.get("name", sym),
-                "sector": a.get("sector", "General"),
-                "class": ac.get("name", "Other"),
-                "is_offshore": is_offshore,
-            }
+try:
+    st.set_page_config(page_title="Risk Engine", page_icon="🛡️", layout="wide")
+except Exception:
+    pass
 
 st.markdown(
     """
-    <div style="background-color: #131722; border: 1px solid #2a2e39; border-left: 5px solid #e040fb;
-                padding: 14px 18px; border-radius: 4px; margin-bottom: 18px;">
-        <span style="font-size: 11px; font-weight: 800; color: #e040fb; letter-spacing: 1px; text-transform: uppercase;">
-            NON-GAUSSIAN TAIL RISK & RISK ATTRIBUTION ENGINE
+    <div style="background-color: #131722; border: 1px solid #2a2e39; border-left: 5px solid #f59e0b;
+                padding: 14px 18px; border-radius: 4px; margin-bottom: 20px;">
+        <span style="font-size: 11px; font-weight: 800; color: #f59e0b; letter-spacing: 1.5px; text-transform: uppercase;">
+            NON-GAUSSIAN TAIL MODELING • CORNISH-FISHER & MACRO STRESS
         </span>
-        <h3 style="margin: 3px 0 0 0; color: #ffffff; font-size: 20px; font-weight: 700;">
-            Cornish-Fisher Value-at-Risk, Expected Shortfall & Risk Decomposition
-        </h3>
+        <h2 style="margin: 4px 0 0 0; color: #ffffff; font-size: 22px; font-weight: 700;">
+            Multi-Market Tail Risk Engine & Macro Scenarios
+        </h2>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# Sidebar Controls
-st.sidebar.markdown("### ⚙️ Risk Horizon Settings")
-lookback_days = st.sidebar.selectbox("Risk Sample Horizon", [252, 504, 756], index=1, format_func=lambda x: f"{x} Days ({x//248}Y)")
-conf_level = st.sidebar.selectbox("Primary Confidence Level", [0.95, 0.99], index=0, format_func=lambda x: f"{int(x*100)}% Confidence")
-force_offline = st.sidebar.checkbox("Force Offline Mode", value=False)
-
-end_dt = datetime.now()
-start_dt = end_dt - timedelta(days=int(lookback_days * 1.55))
-
-prices_df, is_demo = get_cached_multi_asset_data(
-    core_symbols,
-    start_date=start_dt.strftime("%Y-%m-%d"),
-    end_date=end_dt.strftime("%Y-%m-%d"),
-    base_currency="MYR",
-    force_offline=force_offline,
+# Load data
+base_curr = st.session_state.get("base_currency", "USD")
+prices_df, is_demo = get_cached_universe_prices(
+    start_date="2020-01-01",
+    end_date="2024-12-31",
+    base_currency=base_curr,
 )
 
-valid_prices = prices_df.dropna()
-returns_df = valid_prices.pct_change().dropna()
-valid_assets = valid_prices.columns.tolist()
-offshore_mask = [offshore_flags[core_symbols.index(s)] for s in valid_assets]
+registry = load_universe_registry()
+tradable_symbols = get_tradable_tickers(registry)
+available_tradable = [s for s in tradable_symbols if s in prices_df.columns]
 
-# Compute Baseline Optimal Weights (EPF 30% Offshore Cap)
-optimizer = PortfolioOptimizer(returns_df, risk_free_rate=0.030, annual_trading_days=248)
-opt_res = optimizer.optimize_mean_variance(
-    objective="max_sharpe",
-    max_single_asset=0.20,
-    max_offshore=0.30,
-    offshore_mask=offshore_mask,
-)
+if len(available_tradable) < 3:
+    st.error("Insufficient tradable assets for risk modeling.")
+    st.stop()
+
+returns_df = prices_df[available_tradable].pct_change().dropna()
+
+# Baseline Equal-Weight or Max-Sharpe portfolio
+opt = PortfolioOptimizer(returns_df, filter_tradable=False)
+opt_res = opt.optimize_mean_variance(objective="max_sharpe")
 weights = opt_res["weights"]
+assets = opt_res["assets"]
 
-# Portfolio Return Series
-portfolio_returns = returns_df.dot(weights)
+port_daily_ret = pd.Series(np.dot(returns_df[assets].values, weights), index=returns_df.index)
 
-# Calculate Risk Profile
-risk_profile = RiskEngine.comprehensive_risk_profile(portfolio_returns, rf_annual=0.030)
-v95 = risk_profile["var_95"]
-v99 = risk_profile["var_99"]
+# 1. Non-Gaussian Tail Risk Metrics (95% & 99%)
+st.markdown("#### 📐 Value-at-Risk (VaR) & Expected Shortfall (CVaR) Matrix")
 
-# Top Risk Metric Cards
-r1, r2, r3, r4, r5 = st.columns(5)
-target_var = v95 if conf_level == 0.95 else v99
-r1.metric("Sample Skewness (S)", f"{risk_profile['skewness']:.3f}", "Negative = Left Tail" if risk_profile["skewness"] < 0 else "Positive")
-r2.metric("Excess Kurtosis (K)", f"{risk_profile['excess_kurtosis']:.3f}", "Fat-Tailed (>0)" if risk_profile["excess_kurtosis"] > 0 else "Platykurtic")
-r3.metric(f"Cornish-Fisher VaR ({int(conf_level*100)}%)", f"{target_var['cornish_fisher_var']*100:.2f}%", f"Parametric {target_var['parametric_var']*100:.2f}%")
-r4.metric(f"Expected Shortfall / CVaR", f"{target_var['cornish_fisher_cvar']*100:.2f}%", "Conditional Tail")
-r5.metric("Sortino Ratio", f"{risk_profile['sortino_ratio']:.2f}", "Downside Adjusted")
+var_95 = RiskEngine.calculate_var_cvar(port_daily_ret, confidence_level=0.95, horizon_days=1)
+var_99 = RiskEngine.calculate_var_cvar(port_daily_ret, confidence_level=0.99, horizon_days=1)
 
-# Section 1: Non-Gaussian VaR Comparative Table
-st.markdown("### 🛡️ Value-at-Risk (VaR) & Expected Shortfall (CVaR) Matrix")
-st.markdown(
-    """
-    *Comparison of Naive Parametric Gaussian Normal models against Non-Gaussian Cornish-Fisher polynomial expansions:*
-    """
-)
+c_m1, c_m2, c_m3, c_m4 = st.columns(4)
+c_m1.metric("Sample Skewness", f"{var_95['skewness']:.3f}", "Negative = Left Tail Risk")
+c_m2.metric("Excess Kurtosis", f"{var_95['excess_kurtosis']:.3f}", "Positive = Heavy Fat Tails")
+c_m3.metric("Cornish-Fisher VaR (95%)", f"{var_95['cornish_fisher_var']:.2%}", f"vs {var_95['parametric_var']:.2%} Parametric")
+c_m4.metric("Cornish-Fisher VaR (99%)", f"{var_99['cornish_fisher_var']:.2%}", f"vs {var_99['parametric_var']:.2%} Parametric")
 
-var_table_data = [
+tail_table = pd.DataFrame([
     {
-        "Confidence Horizon": "95.0% Confidence (1-Day)",
-        "Parametric Gaussian VaR": v95["parametric_var"],
-        "Empirical Historical VaR": v95["historical_var"],
-        "Cornish-Fisher Modified VaR": v95["cornish_fisher_var"],
-        "Cornish-Fisher Modified CVaR": v95["cornish_fisher_cvar"],
+        "Confidence Horizon": "95.0% (1-Day)",
+        "Parametric Gaussian VaR": f"{var_95['parametric_var']:.2%}",
+        "Historical Empirical VaR": f"{var_95['historical_var']:.2%}",
+        "Cornish-Fisher Modified VaR": f"{var_95['cornish_fisher_var']:.2%}",
+        "Parametric CVaR": f"{var_95['parametric_cvar']:.2%}",
+        "Cornish-Fisher Modified CVaR": f"{var_95['cornish_fisher_cvar']:.2%}",
     },
     {
-        "Confidence Horizon": "99.0% Confidence (1-Day)",
-        "Parametric Gaussian VaR": v99["parametric_var"],
-        "Empirical Historical VaR": v99["historical_var"],
-        "Cornish-Fisher Modified VaR": v99["cornish_fisher_var"],
-        "Cornish-Fisher Modified CVaR": v99["cornish_fisher_cvar"],
+        "Confidence Horizon": "99.0% (1-Day)",
+        "Parametric Gaussian VaR": f"{var_99['parametric_var']:.2%}",
+        "Historical Empirical VaR": f"{var_99['historical_var']:.2%}",
+        "Cornish-Fisher Modified VaR": f"{var_99['cornish_fisher_var']:.2%}",
+        "Parametric CVaR": f"{var_99['parametric_cvar']:.2%}",
+        "Cornish-Fisher Modified CVaR": f"{var_99['cornish_fisher_cvar']:.2%}",
     },
-]
+])
+st.dataframe(tail_table, use_container_width=True, hide_index=True)
 
-var_comp_df = pd.DataFrame(var_table_data)
-st.dataframe(
-    var_comp_df.style.format({
-        "Parametric Gaussian VaR": "{:.2%}",
-        "Empirical Historical VaR": "{:.2%}",
-        "Cornish-Fisher Modified VaR": "{:.2%}",
-        "Cornish-Fisher Modified CVaR": "{:.2%}",
-    }),
-    use_container_width=True,
-    hide_index=True,
-)
+st.markdown("---")
 
-# Section 2: Distribution Overlay Chart
-st.markdown("### 📊 Return Distribution & Fat-Tail Quantile Adjustments")
+# 2. Return Distribution & QQ-Plot Side by Side
+c_dist, c_qq = st.columns([6, 4])
 
-clean_ret = portfolio_returns.values
-mu = float(np.mean(clean_ret))
-sigma = float(np.std(clean_ret, ddof=1))
+with c_dist:
+    st.markdown("#### 📊 Return Distribution & Cornish-Fisher Cutoffs")
 
-dist_fig = go.Figure()
-
-# Actual Return Histogram
-dist_fig.add_trace(
-    go.Histogram(
-        x=clean_ret * 100.0,
-        nbinsx=60,
-        histnorm="probability density",
-        name="Realized Daily Returns",
-        marker_color="rgba(56, 189, 248, 0.4)",
-        marker_line=dict(color="#38bdf8", width=1),
+    clean_ret = port_daily_ret.values
+    fig_hist = go.Figure()
+    fig_hist.add_trace(
+        go.Histogram(
+            x=clean_ret,
+            nbinsx=60,
+            name="Daily Return Density",
+            marker_color="#3b82f6",
+            opacity=0.75,
+            hovertemplate="Return: %{x:.2%}<br>Count: %{y}<extra></extra>",
+        )
     )
-)
 
-# Overlaid Gaussian Curve
-x_axis = np.linspace(np.min(clean_ret), np.max(clean_ret), 200)
-gaussian_pdf = norm.pdf(x_axis, mu, sigma)
-dist_fig.add_trace(
-    go.Scatter(
-        x=x_axis * 100.0,
-        y=gaussian_pdf / 100.0,
-        mode="lines",
-        name="Gaussian Normal Fit",
-        line=dict(color="#94a3b8", width=1.5, dash="dash"),
+    # Add VaR cutoff lines
+    cf_var_cutoff = -var_95["cornish_fisher_var"]
+    param_var_cutoff = -var_95["parametric_var"]
+
+    fig_hist.add_vline(x=cf_var_cutoff, line_dash="solid", line_color="#ef4444", line_width=2,
+                       annotation_text=f"CF VaR 95% ({cf_var_cutoff:.2%})", annotation_position="top left")
+    fig_hist.add_vline(x=param_var_cutoff, line_dash="dash", line_color="#94a3b8", line_width=1.5,
+                       annotation_text=f"Parametric ({param_var_cutoff:.2%})", annotation_position="bottom left")
+
+    fig_hist.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#131722",
+        margin=dict(l=10, r=10, t=20, b=10),
+        height=340,
+        xaxis=dict(tickformat=".1%", gridcolor="#2a2e39"),
+        yaxis=dict(gridcolor="#2a2e39"),
     )
+    st.plotly_chart(fig_hist, use_container_width=True, config={"displayModeBar": False, "responsive": True})
+
+with c_qq:
+    st.markdown("#### 📉 Fat-Tail Quantile-Quantile (QQ) Plot")
+    st.caption("Deviations from the red diagonal reveal non-Gaussian leptokurtosis.")
+
+    qq_data = RiskEngine.generate_qq_plot_data(port_daily_ret)
+    if len(qq_data["theoretical"]) > 0:
+        fig_qq = go.Figure()
+        fig_qq.add_trace(
+            go.Scatter(
+                x=qq_data["theoretical"],
+                y=qq_data["empirical"],
+                mode="markers",
+                name="Standardized Returns",
+                marker=dict(color="#f59e0b", size=4, opacity=0.7),
+                hovertemplate="Theoretical: %{x:.2f}<br>Empirical: %{y:.2f}<extra></extra>",
+            )
+        )
+        min_q = float(np.min(qq_data["theoretical"]))
+        max_q = float(np.max(qq_data["theoretical"]))
+        fig_qq.add_trace(
+            go.Scatter(
+                x=[min_q, max_q],
+                y=[min_q, max_q],
+                mode="lines",
+                name="Normal 45° Line",
+                line=dict(color="#ef4444", dash="dash"),
+            )
+        )
+        fig_qq.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="#0e1117",
+            plot_bgcolor="#131722",
+            margin=dict(l=10, r=10, t=20, b=10),
+            height=340,
+            showlegend=False,
+            xaxis=dict(title="Theoretical Normal Quantiles", gridcolor="#2a2e39"),
+            yaxis=dict(title="Empirical Quantiles", gridcolor="#2a2e39"),
+        )
+        st.plotly_chart(fig_qq, use_container_width=True, config={"displayModeBar": False, "responsive": True})
+
+st.markdown("---")
+
+# 3. Percentage Contribution to Risk (PCR)
+st.markdown("#### 🎯 Percentage Risk Contribution (PCR) Breakdown")
+cov_matrix = returns_df[assets].cov().values * 252.0
+rc_res = RiskEngine.calculate_risk_contributions(weights, cov_matrix)
+
+pcr_df = pd.DataFrame({
+    "Asset": assets,
+    "Name": [registry.get(a, {}).get("name", a) for a in assets],
+    "Weight": weights,
+    "Percentage_Risk_Contribution": rc_res["pcr"],
+})
+pcr_df = pcr_df.sort_values("Percentage_Risk_Contribution", ascending=False)
+
+fig_pcr = px.bar(
+    pcr_df,
+    x="Asset",
+    y=["Weight", "Percentage_Risk_Contribution"],
+    barmode="group",
+    labels=dict(value="Proportion", variable="Metric"),
+    color_discrete_sequence=["#3b82f6", "#f59e0b"],
 )
-
-# Cornish-Fisher vs Parametric Cutoff Lines
-cf_cutoff = -target_var["cornish_fisher_var"] * 100.0
-param_cutoff = -target_var["parametric_var"] * 100.0
-
-dist_fig.add_vline(x=cf_cutoff, line_dash="solid", line_color="#e040fb", annotation_text=f"CF VaR ({cf_cutoff:.2f}%)")
-dist_fig.add_vline(x=param_cutoff, line_dash="dot", line_color="#64748b", annotation_text=f"Normal VaR ({param_cutoff:.2f}%)")
-
-dist_fig.update_layout(
+fig_pcr.update_layout(
     template="plotly_dark",
-    height=360,
-    margin=dict(l=10, r=10, t=20, b=10),
-    plot_bgcolor="#0e1117",
     paper_bgcolor="#0e1117",
-    xaxis=dict(title="Daily Return (%)", ticksuffix="%", gridcolor="#2a2e39"),
-    yaxis=dict(title="Density", gridcolor="#2a2e39"),
+    plot_bgcolor="#131722",
+    margin=dict(l=10, r=10, t=20, b=10),
+    height=280,
+    yaxis=dict(tickformat=".0%", gridcolor="#2a2e39"),
+    xaxis=dict(gridcolor="#2a2e39"),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
 )
-st.plotly_chart(dist_fig, use_container_width=True, config={"displayModeBar": False, "responsive": True})
+st.plotly_chart(fig_pcr, use_container_width=True, config={"displayModeBar": False, "responsive": True})
 
-# Section 3: Percentage Risk Contribution (PRC)
-st.markdown("### 🧩 Percentage Contribution to Total Risk (PCR)")
+st.markdown("---")
 
-cov_daily = returns_df.cov().values
-asset_names = [asset_metadata[s]["name"][:20] for s in valid_assets]
-risk_attrib_df = RiskEngine.calculate_risk_attribution(weights, cov_daily, asset_names=asset_names)
-risk_attrib_df["Asset_Symbol"] = valid_assets
-risk_attrib_df["Asset_Class"] = [asset_metadata[s]["class"] for s in valid_assets]
+# 4. Macroeconomic Scenario Stress Test Simulator
+st.markdown("#### ⚡ Macroeconomic Scenario Shock Simulator")
+st.caption("Replays instant factor spikes across volatility, sovereign rates, energy commodities, and FX.")
 
-active_risk = risk_attrib_df[risk_attrib_df["Weight"] >= 0.005].sort_values("Pct_Risk_Contribution", ascending=False)
+# Extract macro series from prices_df
+macro_cols = [c for c in ["^VIX", "^TNX", "BZ=F", "USDMYR=X", "JPY=X"] if c in prices_df.columns]
+macro_df = prices_df[macro_cols] if macro_cols else None
 
-p_left, p_right = st.columns([6, 4])
+stress_engine = StressTestEngine(returns_df[assets], macro_df=macro_df, assets=assets)
 
-with p_left:
-    bar_fig = px.bar(
-        active_risk,
-        x="Asset",
-        y="Pct_Risk_Contribution",
-        color="Asset_Class",
-        labels={"Pct_Risk_Contribution": "% Contribution to Volatility"},
-        template="plotly_dark",
-    )
-    bar_fig.update_layout(
-        height=320,
-        margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="#0e1117",
-        paper_bgcolor="#0e1117",
-        yaxis=dict(tickformat=".1%", gridcolor="#2a2e39"),
-        xaxis=dict(gridcolor="#2a2e39"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    )
-    st.plotly_chart(bar_fig, use_container_width=True, config={"displayModeBar": False, "responsive": True})
+c_shock1, c_shock2 = st.columns([5, 5])
 
-with p_right:
-    st.dataframe(
-        active_risk[["Asset_Symbol", "Weight", "Pct_Risk_Contribution"]].style.format({
-            "Weight": "{:.1%}",
-            "Pct_Risk_Contribution": "{:.1%}",
-        }),
-        use_container_width=True,
-        hide_index=True,
-    )
+with c_shock1:
+    st.markdown("##### Predefined Macro Shocks")
+    scenarios = stress_engine.run_standard_macro_scenarios(weights)
+    scen_rows = []
+    for s in scenarios:
+        scen_rows.append({
+            "Scenario": s["scenario_name"],
+            "Factor": s["factor"],
+            "Shock": f"{s['shock_magnitude_pct']:+.0%}",
+            "Portfolio Impact": f"{s['portfolio_impact_pct']:+.2%}",
+        })
+    st.dataframe(pd.DataFrame(scen_rows), use_container_width=True, hide_index=True)
+
+with c_shock2:
+    st.markdown("##### Historical Crisis Replay")
+    crises = stress_engine.replay_historical_crises(weights)
+    crisis_rows = []
+    for c in crises:
+        crisis_rows.append({
+            "Crisis Scenario": c["Crisis"],
+            "Period": c["Period"],
+            "Portfolio Drawdown": f"{c['Estimated_Max_Drawdown']:.1%}",
+            "Evaluation": c["Evaluation_Mode"],
+        })
+    st.dataframe(pd.DataFrame(crisis_rows), use_container_width=True, hide_index=True)
