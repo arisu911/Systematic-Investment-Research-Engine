@@ -101,29 +101,38 @@ def render_sidebar_controls():
     preset_cols = st.sidebar.columns(4)
     if preset_cols[0].button("10k", use_container_width=True):
         st.session_state["capital_amount"] = 10_000.0
+        st.session_state["capital_input_widget"] = 10_000.0
     if preset_cols[1].button("50k", use_container_width=True):
         st.session_state["capital_amount"] = 50_000.0
+        st.session_state["capital_input_widget"] = 50_000.0
     if preset_cols[2].button("100k", use_container_width=True):
         st.session_state["capital_amount"] = 100_000.0
+        st.session_state["capital_input_widget"] = 100_000.0
     if preset_cols[3].button("500k", use_container_width=True):
         st.session_state["capital_amount"] = 500_000.0
+        st.session_state["capital_input_widget"] = 500_000.0
 
     preset_cols2 = st.sidebar.columns(3)
     if preset_cols2[0].button("1M", use_container_width=True):
         st.session_state["capital_amount"] = 1_000_000.0
+        st.session_state["capital_input_widget"] = 1_000_000.0
     if preset_cols2[1].button("5M", use_container_width=True):
         st.session_state["capital_amount"] = 5_000_000.0
+        st.session_state["capital_input_widget"] = 5_000_000.0
     if preset_cols2[2].button("10M", use_container_width=True):
         st.session_state["capital_amount"] = 10_000_000.0
+        st.session_state["capital_input_widget"] = 10_000_000.0
+
+    # Retrieve stored capital safely
+    current_capital = float(st.session_state.get("capital_amount", 100_000.0))
 
     capital_val = st.sidebar.number_input(
-        "Nominal Cash Allocation",
-        min_value=100.0,
-        max_value=1_000_000_000.0,
-        value=float(st.session_state["capital_amount"]),
+        label="Portfolio Capital (USD)" if st.session_state.get("selected_currency", "USD") == "USD" else f"Portfolio Capital ({st.session_state.get('selected_currency', 'MYR')})",
+        min_value=1_000.0,
+        max_value=None,  # Unbounded to prevent StreamlitValueAboveMaxError
+        value=max(1_000.0, current_capital),
         step=10_000.0,
-        format="%.2f",
-        label_visibility="collapsed",
+        key="capital_input_widget"
     )
     st.session_state["capital_amount"] = capital_val
 
